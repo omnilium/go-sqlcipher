@@ -445,12 +445,12 @@ type SQLiteDriver struct {
 
 // SQLiteConn implements driver.Conn.
 type SQLiteConn struct {
-	mu             sync.Mutex
-	db             *C.sqlite3
-	loc            *time.Location
-	txlock         string
-	funcs          []*functionInfo
-	aggregators    []*aggInfo
+	mu          sync.Mutex
+	db          *C.sqlite3
+	loc         *time.Location
+	txlock      string
+	funcs       []*functionInfo
+	aggregators []*aggInfo
 	// Prepared-statement cache. The slice is allocated at Open with a
 	// fixed capacity equal to the configured cache size; cap bounds the
 	// cache, len is the live count, and entries are ordered LRU-first
@@ -606,7 +606,7 @@ func (tx *SQLiteTx) Commit() error {
 		// return from Commit() - we must clean up to honour its semantics.
 		// We don't know if the ROLLBACK is strictly necessary, but according
 		// to sqlite's docs, there is no harm in calling ROLLBACK unnecessarily.
-		tx.c.exec(context.Background(), "ROLLBACK", nil)
+		_, _ = tx.c.exec(context.Background(), "ROLLBACK", nil)
 	}
 	return err
 }
@@ -633,7 +633,7 @@ func (c *SQLiteConn) RegisterCollation(name string, cmp func(string, string) int
 	handle := newHandle(c, cmp)
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
-	rv := C.sqlite3_create_collation(c.db, cname, C.SQLITE_UTF8, handle, (*[0]byte)(unsafe.Pointer(C.compareTrampoline)))
+	rv := C.sqlite3_create_collation(c.db, cname, C.SQLITE_UTF8, handle, (*[0]byte)(C.compareTrampoline))
 	if rv != C.SQLITE_OK {
 		return c.lastError()
 	}
@@ -719,13 +719,13 @@ func (c *SQLiteConn) RegisterFunc(name string, impl any, pure bool) error {
 	fi.f = reflect.ValueOf(impl)
 	t := fi.f.Type()
 	if t.Kind() != reflect.Func {
-		return errors.New("Non-function passed to RegisterFunc")
+		return errors.New("non-function passed to RegisterFunc")
 	}
 	if t.NumOut() != 1 && t.NumOut() != 2 {
 		return errors.New("SQLite functions must return 1 or 2 values")
 	}
 	if t.NumOut() == 2 && !t.Out(1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-		return errors.New("Second return value of SQLite function must be error")
+		return errors.New("second return value of SQLite function must be error")
 	}
 
 	numArgs := t.NumIn()
@@ -807,7 +807,7 @@ func (c *SQLiteConn) RegisterAggregator(name string, impl any, pure bool) error 
 		return errors.New("SQLite aggregator constructors must return 1 or 2 values")
 	}
 	if t.NumOut() == 2 && !t.Out(1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-		return errors.New("Second return value of SQLite function must be error")
+		return errors.New("second return value of SQLite function must be error")
 	}
 	if t.NumIn() != 0 {
 		return errors.New("SQLite aggregator constructors must not have arguments")
@@ -815,7 +815,7 @@ func (c *SQLiteConn) RegisterAggregator(name string, impl any, pure bool) error 
 
 	agg := t.Out(0)
 	switch agg.Kind() {
-	case reflect.Ptr, reflect.Interface:
+	case reflect.Pointer, reflect.Interface:
 	default:
 		return errors.New("SQlite aggregator constructor must return a pointer object")
 	}
@@ -833,7 +833,7 @@ func (c *SQLiteConn) RegisterAggregator(name string, impl any, pure bool) error 
 
 	stepNArgs := step.NumIn()
 	start := 0
-	if agg.Kind() == reflect.Ptr {
+	if agg.Kind() == reflect.Pointer {
 		// Skip over the method receiver
 		stepNArgs--
 		start++
@@ -866,7 +866,7 @@ func (c *SQLiteConn) RegisterAggregator(name string, impl any, pure bool) error 
 	}
 	done := doneFn.Type
 	doneNArgs := done.NumIn()
-	if agg.Kind() == reflect.Ptr {
+	if agg.Kind() == reflect.Pointer {
 		// Skip over the method receiver
 		doneNArgs--
 	}
@@ -1240,7 +1240,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			default:
 				loc, err = time.LoadLocation(val)
 				if err != nil {
-					return nil, fmt.Errorf("Invalid _loc: %v: %v", val, err)
+					return nil, fmt.Errorf("invalid _loc: %v: %v", val, err)
 				}
 			}
 		}
@@ -1253,7 +1253,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "full":
 				mutex = C.SQLITE_OPEN_FULLMUTEX
 			default:
-				return nil, fmt.Errorf("Invalid _mutex: %v", val)
+				return nil, fmt.Errorf("invalid _mutex: %v", val)
 			}
 		}
 
@@ -1267,7 +1267,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "deferred":
 				txlock = "BEGIN"
 			default:
-				return nil, fmt.Errorf("Invalid _txlock: %v", val)
+				return nil, fmt.Errorf("invalid _txlock: %v", val)
 			}
 		}
 
@@ -1291,7 +1291,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "2", "incremental":
 				autoVacuum = 2
 			default:
-				return nil, fmt.Errorf("Invalid _auto_vacuum: %v, expecting value of '0 NONE 1 FULL 2 INCREMENTAL'", val)
+				return nil, fmt.Errorf("invalid _auto_vacuum: %v, expecting value of '0 NONE 1 FULL 2 INCREMENTAL'", val)
 			}
 		}
 
@@ -1309,7 +1309,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 		if val := params.Get(pkey); val != "" {
 			iv, err := strconv.ParseInt(val, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("Invalid _busy_timeout: %v: %v", val, err)
+				return nil, fmt.Errorf("invalid _busy_timeout: %v: %v", val, err)
 			}
 			busyTimeout = int(iv)
 		}
@@ -1332,7 +1332,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				caseSensitiveLike = 1
 			default:
-				return nil, fmt.Errorf("Invalid _case_sensitive_like: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _case_sensitive_like: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1354,7 +1354,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				deferForeignKeys = 1
 			default:
-				return nil, fmt.Errorf("Invalid _defer_foreign_keys: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _defer_foreign_keys: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1376,7 +1376,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				foreignKeys = 1
 			default:
-				return nil, fmt.Errorf("Invalid _foreign_keys: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _foreign_keys: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1391,7 +1391,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				ignoreCheckConstraints = 1
 			default:
-				return nil, fmt.Errorf("Invalid _ignore_check_constraints: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _ignore_check_constraints: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1417,7 +1417,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 				// See https://www.sqlite.org/pragma.html#pragma_synchronous
 				synchronousMode = "NORMAL"
 			default:
-				return nil, fmt.Errorf("Invalid _journal: %v, expecting value of 'DELETE TRUNCATE PERSIST MEMORY WAL OFF'", val)
+				return nil, fmt.Errorf("invalid _journal: %v, expecting value of 'DELETE TRUNCATE PERSIST MEMORY WAL OFF'", val)
 			}
 		}
 
@@ -1437,7 +1437,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "NORMAL", "EXCLUSIVE":
 				lockingMode = strings.ToUpper(val)
 			default:
-				return nil, fmt.Errorf("Invalid _locking_mode: %v, expecting value of 'NORMAL EXCLUSIVE", val)
+				return nil, fmt.Errorf("invalid _locking_mode: %v, expecting value of 'NORMAL EXCLUSIVE", val)
 			}
 		}
 
@@ -1452,7 +1452,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				queryOnly = 1
 			default:
-				return nil, fmt.Errorf("Invalid _query_only: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _query_only: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1474,7 +1474,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				recursiveTriggers = 1
 			default:
-				return nil, fmt.Errorf("Invalid _recursive_triggers: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _recursive_triggers: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1491,7 +1491,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "fast":
 				secureDelete = "FAST"
 			default:
-				return nil, fmt.Errorf("Invalid _secure_delete: %v, expecting boolean value of '0 1 false true no yes off on fast'", val)
+				return nil, fmt.Errorf("invalid _secure_delete: %v, expecting boolean value of '0 1 false true no yes off on fast'", val)
 			}
 		}
 
@@ -1511,7 +1511,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "0", "OFF", "1", "NORMAL", "2", "FULL", "3", "EXTRA":
 				synchronousMode = strings.ToUpper(val)
 			default:
-				return nil, fmt.Errorf("Invalid _synchronous: %v, expecting value of '0 OFF 1 NORMAL 2 FULL 3 EXTRA'", val)
+				return nil, fmt.Errorf("invalid _synchronous: %v, expecting value of '0 OFF 1 NORMAL 2 FULL 3 EXTRA'", val)
 			}
 		}
 
@@ -1526,7 +1526,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				writableSchema = 1
 			default:
-				return nil, fmt.Errorf("Invalid _writable_schema: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _writable_schema: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1537,7 +1537,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 		if val := params.Get("_cache_size"); val != "" {
 			iv, err := strconv.ParseInt(val, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("Invalid _cache_size: %v: %v", val, err)
+				return nil, fmt.Errorf("invalid _cache_size: %v: %v", val, err)
 			}
 			cacheSize = &iv
 		}
@@ -1548,10 +1548,10 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 		if val := params.Get("_stmt_cache_size"); val != "" {
 			iv, err := strconv.Atoi(val)
 			if err != nil {
-				return nil, fmt.Errorf("Invalid _stmt_cache_size: %v: %v", val, err)
+				return nil, fmt.Errorf("invalid _stmt_cache_size: %v: %v", val, err)
 			}
 			if iv < 0 {
-				return nil, fmt.Errorf("Invalid _stmt_cache_size: %v, expecting non-negative integer", val)
+				return nil, fmt.Errorf("invalid _stmt_cache_size: %v, expecting non-negative integer", val)
 			}
 			stmtCacheSize = iv
 		}
@@ -1696,7 +1696,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	// If a database contains the SQLITE_USER table, then the
 	// call to Authenticate must be invoked with an
 	// appropriate username and password prior to enable read and write
-	//access to the database.
+	// access to the database.
 	//
 	// Return SQLITE_OK on success or SQLITE_ERROR if the username/password
 	// combination is incorrect or unknown.
@@ -1765,10 +1765,10 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 		// has provided an username and password within the DSN.
 		// We are not allowed to continue.
 		if len(authUser) == 0 {
-			return nil, fmt.Errorf("Missing '_auth_user' while user authentication was requested with '_auth'")
+			return nil, fmt.Errorf("missing '_auth_user' while user authentication was requested with '_auth'")
 		}
 		if len(authPass) == 0 {
-			return nil, fmt.Errorf("Missing '_auth_pass' while user authentication was requested with '_auth'")
+			return nil, fmt.Errorf("missing '_auth_pass' while user authentication was requested with '_auth'")
 		}
 
 		// Check if User Authentication is Enabled
@@ -2011,7 +2011,7 @@ func (c *SQLiteConn) Prepare(query string) (driver.Stmt, error) {
 	return c.prepare(context.Background(), query)
 }
 
-func (c *SQLiteConn) prepare(ctx context.Context, query string) (driver.Stmt, error) {
+func (c *SQLiteConn) prepare(_ context.Context, query string) (driver.Stmt, error) {
 	pquery := C.CString(query)
 	defer C.free(unsafe.Pointer(pquery))
 	var s *C.sqlite3_stmt
@@ -2613,7 +2613,7 @@ func (rc *SQLiteRows) nextSyncLocked(dest []driver.Value) error {
 			var timeVal time.Time
 
 			n := int(col.n)
-			s := C.GoStringN((*C.char)(unsafe.Pointer(col.ptr)), C.int(n))
+			s := C.GoStringN((*C.char)(col.ptr), C.int(n))
 
 			switch decltype[i] {
 			case columnTimestamp, columnDatetime, columnDate:

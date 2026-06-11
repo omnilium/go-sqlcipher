@@ -14,7 +14,7 @@ import (
 )
 
 // Ping implement Pinger.
-func (c *SQLiteConn) Ping(ctx context.Context) error {
+func (c *SQLiteConn) Ping(_ context.Context) error {
 	if c.db == nil {
 		// must be ErrBadConn for sql to close the database
 		return driver.ErrBadConn
@@ -38,7 +38,7 @@ func (c *SQLiteConn) PrepareContext(ctx context.Context, query string) (driver.S
 }
 
 // BeginTx implement ConnBeginTx.
-func (c *SQLiteConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+func (c *SQLiteConn) BeginTx(ctx context.Context, _ driver.TxOptions) (driver.Tx, error) {
 	return c.begin(ctx)
 }
 

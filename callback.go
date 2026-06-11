@@ -83,7 +83,7 @@ func authorizerTrampoline(handle unsafe.Pointer, op int, arg1 *C.char, arg2 *C.c
 }
 
 //export preUpdateHookTrampoline
-func preUpdateHookTrampoline(handle unsafe.Pointer, dbHandle uintptr, op int, db *C.char, table *C.char, oldrowid int64, newrowid int64) {
+func preUpdateHookTrampoline(handle unsafe.Pointer, _ uintptr, op int, db *C.char, table *C.char, oldrowid int64, newrowid int64) {
 	hval := lookupHandleVal(handle)
 	data := SQLitePreUpdateData{
 		Conn:         hval.db,
@@ -172,10 +172,7 @@ func callbackArgBool(v *C.sqlite3_value) (reflect.Value, error) {
 		return reflect.Value{}, fmt.Errorf("argument must be an INTEGER")
 	}
 	i := int64(C.sqlite3_value_int64(v))
-	val := false
-	if i != 0 {
-		val = true
-	}
+	val := i != 0
 	return reflect.ValueOf(val), nil
 }
 
@@ -350,7 +347,7 @@ func callbackRetText(ctx *C.sqlite3_context, v reflect.Value) error {
 	return nil
 }
 
-func callbackRetNil(ctx *C.sqlite3_context, v reflect.Value) error {
+func callbackRetNil(_ *C.sqlite3_context, _ reflect.Value) error {
 	return nil
 }
 

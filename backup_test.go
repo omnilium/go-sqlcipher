@@ -91,13 +91,13 @@ func testBackup(t *testing.T, testRowCount int, usePerPageSteps bool) {
 	}
 	_, err = srcDb.Exec("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
 	if err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		t.Fatal("Failed to create the source database \"test\" table:", err)
 	}
 	for id := 0; id < testRowCount; id++ {
 		_, err = srcDb.Exec("INSERT INTO test (id, value) VALUES (?, ?)", id, generateTestData(id))
 		if err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			t.Fatal("Failed to insert a row into the source database \"test\" table:", err)
 		}
 	}
@@ -272,7 +272,7 @@ func TestBackupError(t *testing.T) {
 		t.Fatal("Failed to open the database:", err)
 	}
 	defer db.Close()
-	db.Ping()
+	_ = db.Ping()
 
 	// Need the driver connection in order to perform the backup.
 	if dbDriverConn == nil {

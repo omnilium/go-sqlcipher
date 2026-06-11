@@ -6,9 +6,10 @@
 package sqlite3
 
 import (
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // opt-in legacy SHA1 password encoders; callers choose them explicitly (see file header)
 	"crypto/sha256"
 	"crypto/sha512"
+	"slices"
 )
 
 // This file provides several different implementations for the
@@ -50,24 +51,22 @@ import (
 // perhaps using a cryptographic hash function like SHA1.
 
 // CryptEncoderSHA1 encodes a password with SHA1
-func CryptEncoderSHA1(pass []byte, hash any) []byte {
-	h := sha1.Sum(pass)
+func CryptEncoderSHA1(pass []byte, _ any) []byte {
+	h := sha1.Sum(pass) //nolint:gosec // opt-in legacy SHA1 encoder, chosen explicitly by the caller
 	return h[:]
 }
 
 // CryptEncoderSSHA1 encodes a password with SHA1 with the
 // configured salt.
 func CryptEncoderSSHA1(salt string) func(pass []byte, hash any) []byte {
-	return func(pass []byte, hash any) []byte {
-		s := []byte(salt)
-		p := append(pass, s...)
-		h := sha1.Sum(p)
+	return func(pass []byte, _ any) []byte {
+		h := sha1.Sum(slices.Concat(pass, []byte(salt))) //nolint:gosec // opt-in legacy SHA1 encoder, chosen explicitly by the caller
 		return h[:]
 	}
 }
 
 // CryptEncoderSHA256 encodes a password with SHA256
-func CryptEncoderSHA256(pass []byte, hash any) []byte {
+func CryptEncoderSHA256(pass []byte, _ any) []byte {
 	h := sha256.Sum256(pass)
 	return h[:]
 }
@@ -75,16 +74,14 @@ func CryptEncoderSHA256(pass []byte, hash any) []byte {
 // CryptEncoderSSHA256 encodes a password with SHA256
 // with the configured salt
 func CryptEncoderSSHA256(salt string) func(pass []byte, hash any) []byte {
-	return func(pass []byte, hash any) []byte {
-		s := []byte(salt)
-		p := append(pass, s...)
-		h := sha256.Sum256(p)
+	return func(pass []byte, _ any) []byte {
+		h := sha256.Sum256(slices.Concat(pass, []byte(salt)))
 		return h[:]
 	}
 }
 
 // CryptEncoderSHA384 encodes a password with SHA384
-func CryptEncoderSHA384(pass []byte, hash any) []byte {
+func CryptEncoderSHA384(pass []byte, _ any) []byte {
 	h := sha512.Sum384(pass)
 	return h[:]
 }
@@ -92,16 +89,14 @@ func CryptEncoderSHA384(pass []byte, hash any) []byte {
 // CryptEncoderSSHA384 encodes a password with SHA384
 // with the configured salt
 func CryptEncoderSSHA384(salt string) func(pass []byte, hash any) []byte {
-	return func(pass []byte, hash any) []byte {
-		s := []byte(salt)
-		p := append(pass, s...)
-		h := sha512.Sum384(p)
+	return func(pass []byte, _ any) []byte {
+		h := sha512.Sum384(slices.Concat(pass, []byte(salt)))
 		return h[:]
 	}
 }
 
 // CryptEncoderSHA512 encodes a password with SHA512
-func CryptEncoderSHA512(pass []byte, hash any) []byte {
+func CryptEncoderSHA512(pass []byte, _ any) []byte {
 	h := sha512.Sum512(pass)
 	return h[:]
 }
@@ -109,10 +104,8 @@ func CryptEncoderSHA512(pass []byte, hash any) []byte {
 // CryptEncoderSSHA512 encodes a password with SHA512
 // with the configured salt
 func CryptEncoderSSHA512(salt string) func(pass []byte, hash any) []byte {
-	return func(pass []byte, hash any) []byte {
-		s := []byte(salt)
-		p := append(pass, s...)
-		h := sha512.Sum512(p)
+	return func(pass []byte, _ any) []byte {
+		h := sha512.Sum512(slices.Concat(pass, []byte(salt)))
 		return h[:]
 	}
 }

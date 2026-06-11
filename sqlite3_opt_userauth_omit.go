@@ -25,7 +25,7 @@ import (
 //
 // If the SQLITE_USER table is not present in the database file, then
 // this interface is a harmless no-op returnning SQLITE_OK.
-func (c *SQLiteConn) Authenticate(username, password string) error {
+func (c *SQLiteConn) Authenticate(_, _ string) error {
 	// NOOP
 	return nil
 }
@@ -39,7 +39,7 @@ func (c *SQLiteConn) Authenticate(username, password string) error {
 //		C.SQLITE_OK (0)
 //		C.SQLITE_ERROR (1)
 //	 C.SQLITE_AUTH (23)
-func (c *SQLiteConn) authenticate(username, password string) int {
+func (c *SQLiteConn) authenticate(_, _ string) int {
 	// NOOP
 	return 0
 }
@@ -52,7 +52,7 @@ func (c *SQLiteConn) authenticate(username, password string) int {
 // The AuthUserAdd only works for the "main" database, not
 // for any ATTACH-ed databases. Any call to AuthUserAdd by a
 // non-admin user results in an error.
-func (c *SQLiteConn) AuthUserAdd(username, password string, admin bool) error {
+func (c *SQLiteConn) AuthUserAdd(_, _ string, _ bool) error {
 	// NOOP
 	return nil
 }
@@ -71,7 +71,7 @@ func (c *SQLiteConn) AuthUserAdd(username, password string, admin bool) error {
 //		C.SQLITE_OK (0)
 //		C.SQLITE_ERROR (1)
 //	 C.SQLITE_AUTH (23)
-func (c *SQLiteConn) authUserAdd(username, password string, admin int) int {
+func (c *SQLiteConn) authUserAdd(_, _ string, _ int) int {
 	// NOOP
 	return 0
 }
@@ -81,7 +81,7 @@ func (c *SQLiteConn) authUserAdd(username, password string, admin int) int {
 // login credentials.  Only an admin user can change another users login
 // credentials or admin privilege setting.  No user may change their own
 // admin privilege setting.
-func (c *SQLiteConn) AuthUserChange(username, password string, admin bool) error {
+func (c *SQLiteConn) AuthUserChange(_, _ string, _ bool) error {
 	// NOOP
 	return nil
 }
@@ -103,7 +103,7 @@ func (c *SQLiteConn) AuthUserChange(username, password string, admin bool) error
 //		C.SQLITE_OK (0)
 //		C.SQLITE_ERROR (1)
 //	 C.SQLITE_AUTH (23)
-func (c *SQLiteConn) authUserChange(username, password string, admin int) int {
+func (c *SQLiteConn) authUserChange(_, _ string, _ int) int {
 	// NOOP
 	return 0
 }
@@ -113,7 +113,7 @@ func (c *SQLiteConn) authUserChange(username, password string, admin int) int {
 // which guarantees that there is always an admin user and hence that
 // the database cannot be converted into a no-authentication-required
 // database.
-func (c *SQLiteConn) AuthUserDelete(username string) error {
+func (c *SQLiteConn) AuthUserDelete(_ string) error {
 	// NOOP
 	return nil
 }
@@ -130,7 +130,7 @@ func (c *SQLiteConn) AuthUserDelete(username string) error {
 //		C.SQLITE_OK (0)
 //		C.SQLITE_ERROR (1)
 //	 C.SQLITE_AUTH (23)
-func (c *SQLiteConn) authUserDelete(username string) int {
+func (c *SQLiteConn) authUserDelete(_ string) int {
 	// NOOP
 	return 0
 }

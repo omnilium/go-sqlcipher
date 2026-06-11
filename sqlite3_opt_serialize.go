@@ -27,8 +27,7 @@ func (c *SQLiteConn) Serialize(schema string) ([]byte, error) {
 	if schema == "" {
 		schema = "main"
 	}
-	var zSchema *C.char
-	zSchema = C.CString(schema)
+	zSchema := C.CString(schema)
 	defer C.free(unsafe.Pointer(zSchema))
 
 	var sz C.sqlite3_int64
@@ -55,8 +54,7 @@ func (c *SQLiteConn) Deserialize(b []byte, schema string) error {
 	if schema == "" {
 		schema = "main"
 	}
-	var zSchema *C.char
-	zSchema = C.CString(schema)
+	zSchema := C.CString(schema)
 	defer C.free(unsafe.Pointer(zSchema))
 
 	tmpBuf := (*C.uchar)(C.sqlite3_malloc64(C.sqlite3_uint64(len(b))))

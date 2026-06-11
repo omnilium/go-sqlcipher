@@ -4,11 +4,13 @@
 
 For upstream documentation, FAQ, and the full feature/build-tag matrix, see the [upstream README](https://github.com/mattn/go-sqlite3); this file covers only what is specific to the fork.
 
+> **Drop-in compatibility — with a caveat.** This fork aims to be a drop-in replacement for `mattn/go-sqlite3`: the public API (exported types, functions, constants, and SQLite C-API mirror names) is preserved. However, as part of the Go version bump and the associated linting/refactoring, there may be slight differences in the contract — for example, error message wording (lower-cased to satisfy `staticcheck`) and the avoidance of input-slice mutation in the salted crypt encoders. Behaviour-affecting differences are intentional and considered improvements; pin a specific fork tag and test before relying on exact byte-for-byte parity with upstream.
+
 ## Relationship to upstream
 
 The fork carries Omnilium's changes as a small patch stack on top of an upstream **release tag** — never on top of upstream's unreleased `master` tip. The current base is **`v1.14.45`**.
 
-The one foundational patch, always present and rebased forward on every resync, is the `go.mod` module path: it declares `github.com/omnilium/go-sqlcipher` (not `github.com/mattn/go-sqlite3`) so the package is importable under its own path without a `replace` directive.
+The foundational patches, always present and rebased forward on every resync, both live in `go.mod`: the **module path** declares `github.com/omnilium/go-sqlcipher` (not `github.com/mattn/go-sqlite3`) so the package is importable under its own path without a `replace` directive, and the **Go version floor** is held at the Omnilium baseline (currently `go 1.26`) rather than upstream's lower minimum.
 
 ## Maintenance model
 
@@ -28,15 +30,18 @@ The fork uses its **own independent semver line starting at `v0.1.0`** — it is
 
 ## Building and testing
 
-Standard CGo build; a C toolchain is required.
+Standard CGo build; a C toolchain is required. These are the gates CI enforces:
 
 ```sh
 go build ./...
-go vet .
-go test .
+golangci-lint run ./...   # golangci-lint v2 (config in .golangci.yaml)
+go test -race ./...
+govulncheck ./...
 ```
 
 Build tags follow upstream (e.g. `sqlite_fts5`, `sqlite_userauth`, `libsqlite3`); see the `sqlite3_opt_*.go` files.
+
+> **Planned testing improvements.** CI currently runs the default build only. We plan to add (1) a CI matrix that builds with the optional feature tags so the tag-gated test files are actually exercised, (2) more statement coverage (currently ~61%), and (3) native Go fuzz targets for SQL and database-file parsing.
 
 ## License
 
