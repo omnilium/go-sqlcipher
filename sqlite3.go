@@ -21,6 +21,20 @@ package sqlite3
 #cgo CFLAGS: -DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1
 #cgo CFLAGS: -DSQLITE_ENABLE_UPDATE_DELETE_LIMIT
 #cgo CFLAGS: -Wno-deprecated-declarations
+// SQLCipher: enable the encryption codec. SQLITE_HAS_CODEC activates the
+// SQLCipher codec hooks; SQLITE_TEMP_STORE=2 is required so temp data never
+// lands unencrypted on disk; SQLITE_EXTRA_INIT/SHUTDOWN register and tear down
+// SQLCipher's crypto provider at library init. The crypto provider itself
+// (OpenSSL) is selected and linked by sqlite3_crypto_openssl.go.
+#cgo CFLAGS: -DSQLITE_HAS_CODEC
+#cgo CFLAGS: -DSQLITE_TEMP_STORE=2
+#cgo CFLAGS: -DSQLITE_EXTRA_INIT=sqlcipher_extra_init
+#cgo CFLAGS: -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown
+// SQLCipher's codec uses fixed-width <stdint.h> types (uint64_t) directly. The
+// amalgamation only pulls in <stdint.h> under HAVE_STDINT_H, which is otherwise
+// set by the autoconf sqlite_cfg.h we don't compile with; define it here so the
+// codec sees the C99 integer types.
+#cgo CFLAGS: -DHAVE_STDINT_H=1
 #cgo openbsd CFLAGS: -I/usr/local/include
 #cgo openbsd LDFLAGS: -L/usr/local/lib
 #ifndef USE_LIBSQLITE3
@@ -1069,6 +1083,55 @@ func (c *SQLiteConn) begin(ctx context.Context) (driver.Tx, error) {
 	return &SQLiteTx{c}, nil
 }
 
+// quoteKey renders a SQLCipher key for a "PRAGMA key" statement. A raw key in
+// x'<hex>' form (a blob literal) is emitted verbatim; any other value is treated
+// as a passphrase and wrapped as a single-quoted SQL string literal, with
+// embedded single quotes doubled per SQL escaping rules.
+func quoteKey(k string) string {
+	if len(k) >= 3 && (k[0] == 'x' || k[0] == 'X') && k[1] == '\'' && k[len(k)-1] == '\'' {
+		return k
+	}
+	return "'" + strings.ReplaceAll(k, "'", "''") + "'"
+}
+
+// sqlcipherCipherParams maps DSN query parameters to the SQLCipher PRAGMA that
+// tunes the cipher for opening databases written with non-default settings (or
+// by other SQLCipher versions). They are applied in slice order, immediately
+// after PRAGMA key: cipher_compatibility comes first because it resets the other
+// settings to a SQLCipher-version profile that the individual settings then
+// override. A param whose value is an identifier (an algorithm name) is
+// restricted to identifier characters; the rest are integers. Either way the
+// value cannot inject SQL.
+var sqlcipherCipherParams = []struct {
+	dsn    string
+	pragma string
+	ident  bool
+}{
+	{"_cipher_compatibility", "cipher_compatibility", false},
+	{"_cipher_page_size", "cipher_page_size", false},
+	{"_kdf_iter", "kdf_iter", false},
+	{"_cipher_hmac_algorithm", "cipher_hmac_algorithm", true},
+	{"_cipher_kdf_algorithm", "cipher_kdf_algorithm", true},
+	{"_cipher_plaintext_header_size", "cipher_plaintext_header_size", false},
+}
+
+// isCipherIdent reports whether s is a bare SQLCipher identifier (the form an
+// algorithm value such as HMAC_SHA512 or PBKDF2_HMAC_SHA512 takes): a non-empty
+// run of ASCII letters, digits, and underscores.
+func isCipherIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // Open database and return a new connection.
 //
 // A pragma can take either zero or one argument.
@@ -1112,6 +1175,24 @@ func (c *SQLiteConn) begin(ctx context.Context) (driver.Tx, error) {
 //	  does in fact change can result in incorrect query results and/or SQLITE_CORRUPT errors.
 //
 // go-sqlite3 adds the following query parameters to those used by SQLite:
+//
+//	_key=XXX
+//	  SQLCipher encryption key. The value is either a passphrase, which is run
+//	  through SQLCipher's KDF, or a raw key as an x'<hex>' blob literal (a
+//	  64-byte/128-hex-char key, optionally with a 16-byte/32-hex-char salt,
+//	  bypasses the KDF). The key is applied via "PRAGMA key" before the
+//	  connection's first page read, so write/close/reopen round-trips succeed.
+//	  Without _key the connection is an ordinary unencrypted SQLite connection.
+//
+//	_cipher_compatibility=N | _kdf_iter=N | _cipher_page_size=N |
+//	_cipher_hmac_algorithm=X | _cipher_kdf_algorithm=X |
+//	_cipher_plaintext_header_size=N
+//	  SQLCipher cipher-tuning pragmas, for opening databases written with
+//	  non-default cipher settings or by another SQLCipher version. They are
+//	  applied via "PRAGMA <name>" right after _key (cipher_compatibility first,
+//	  as it resets the others to a version profile). The algorithm values are
+//	  bare SQLCipher identifiers (e.g. HMAC_SHA512, PBKDF2_HMAC_SHA512); the rest
+//	  are integers. They have no effect without _key.
 //
 //	_loc=XXX
 //	  Specify location of time format. It's possible to specify "auto".
@@ -1190,6 +1271,12 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	mutex := C.int(C.SQLITE_OPEN_FULLMUTEX)
 	txlock := "BEGIN"
 
+	// SQLCipher encryption key and cipher-tuning pragmas. The key, when set,
+	// must be applied before any statement reads a database page (see below).
+	var encryptionKey string
+	var keySet bool
+	var cipherPragmas []string
+
 	// PRAGMA's
 	autoVacuum := -1
 	busyTimeout := 5000
@@ -1255,6 +1342,34 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			default:
 				return nil, fmt.Errorf("invalid _mutex: %v", val)
 			}
+		}
+
+		// _key sets the SQLCipher encryption key. The value is either a
+		// passphrase (run through SQLCipher's KDF) or a raw key in x'<hex>'
+		// blob-literal form. It is applied via "PRAGMA key" before the
+		// connection's first page read; see the apply block after open below.
+		if val := params.Get("_key"); val != "" {
+			encryptionKey = val
+			keySet = true
+		}
+
+		// SQLCipher cipher-tuning pragmas (see sqlcipherCipherParams). Collected
+		// here and applied after PRAGMA key below. Integer values are validated
+		// as integers and identifier values are restricted to identifier
+		// characters, so a malicious DSN cannot inject SQL through them.
+		for _, cp := range sqlcipherCipherParams {
+			val := params.Get(cp.dsn)
+			if val == "" {
+				continue
+			}
+			if cp.ident {
+				if !isCipherIdent(val) {
+					return nil, fmt.Errorf("invalid %s: %q, expecting a SQLCipher identifier", cp.dsn, val)
+				}
+			} else if _, err := strconv.Atoi(val); err != nil {
+				return nil, fmt.Errorf("invalid %s: %q, expecting an integer", cp.dsn, val)
+			}
+			cipherPragmas = append(cipherPragmas, fmt.Sprintf("PRAGMA %s = %s;", cp.pragma, val))
 		}
 
 		// _txlock
@@ -1597,6 +1712,29 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			return lastError(db)
 		}
 		return nil
+	}
+
+	// SQLCipher encryption key.
+	//
+	// The key MUST be applied before any statement touches a database page.
+	// SQLCipher derives the page cipher from the key on the first read; if the
+	// key is set after that (e.g. in a post-open hook), writes appear to work
+	// but reopening the file fails with "file is not a database". Applying it
+	// here, as the very first exec on the connection, is what makes
+	// write -> close -> reopen round-trips succeed.
+	if keySet {
+		if err := exec("PRAGMA key = " + quoteKey(encryptionKey) + ";"); err != nil {
+			C.sqlite3_close_v2(db)
+			return nil, err
+		}
+		// Cipher-tuning pragmas, in sqlcipherCipherParams order, after the key
+		// and still before the first page read.
+		for _, pragma := range cipherPragmas {
+			if err := exec(pragma); err != nil {
+				C.sqlite3_close_v2(db)
+				return nil, err
+			}
+		}
 	}
 
 	// Busy timeout
