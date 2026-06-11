@@ -36,7 +36,7 @@ Build tags follow upstream (`sqlite_fts5`, `sqlite_userauth`, `libsqlite3`, …)
 
 ## CI & linting
 
-CI (`.github/workflows/ci.yml`) has four jobs — **Build**, **Lint**, **Test (race)**, **Vulnerability scan** — every job on a Blacksmith runner (house rule, see writing-workflows), with the Go version read from `go.mod`. It currently runs the **default build only**; the tag-gated test files are not yet exercised in CI (a planned feature-tag matrix — see the README).
+CI (`.github/workflows/ci.yml`) has four jobs — **Build**, **Lint**, **Test (race)**, **Vulnerability scan** — every job on a Blacksmith runner (house rule, see writing-workflows), with the Go version read from `go.mod`. **Build** and **Test (race)** run as an **OS/arch matrix** across the supported targets — Linux **amd64** + **arm64** and **Apple Silicon** macOS — since the SQLCipher cgo build and its OpenSSL linkage are platform-specific; **Lint** and **Vulnerability scan** are platform-agnostic static analyses and run once on Linux x86-64. Every job first provisions OpenSSL (`libssl-dev` on Linux, Homebrew `openssl` on macOS) via the shared `.github/actions/setup` composite action, which also sets up Go. The tag-gated test files are still not exercised in CI (a planned feature-tag matrix — see the README).
 
 Linting is golangci-lint v2 with the Omnilium house config (`.golangci.yaml`). The **entire tree — vendored upstream code included — is held to the bar**: findings are fixed, not exempted (this is the *Forked code is ours* rule under Conventions). The config carries a few documented, driver-intrinsic adjustments, each with a rationale comment in `.golangci.yaml`:
 

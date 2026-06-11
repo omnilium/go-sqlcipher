@@ -89,7 +89,9 @@ The SQLCipher round-trip / wrong-key / cipher-tuning / `sqlcipher`-CLI-interop t
 
 Build tags follow upstream (e.g. `sqlite_fts5`, `sqlite_userauth`, `libsqlite3`); see the `sqlite3_opt_*.go` files.
 
-> **Planned testing improvements.** CI currently runs the default Linux build only. We plan to add (1) an OS/arch CI matrix (Linux x86-64 + ARM64 and macOS, all on Blacksmith runners) to validate the build across supported targets, (2) a matrix that builds with the optional feature tags so the tag-gated test files are actually exercised, and (3) native Go fuzz targets for SQL and database-file parsing.
+CI builds and race-tests across every supported target — Linux x86-64, Linux ARM64, and Apple Silicon macOS — on Blacksmith runners, and lints + vuln-scans on Linux x86-64. Each runner gets OpenSSL provisioned first (`libssl-dev` on Linux, Homebrew `openssl` on macOS) so the SQLCipher cgo build links.
+
+> **Planned testing improvements.** We still plan to add (1) a matrix that builds with the optional feature tags so the tag-gated test files are actually exercised, and (2) native Go fuzz targets for SQL and database-file parsing.
 
 ## License
 
