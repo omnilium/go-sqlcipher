@@ -64,6 +64,35 @@ jobs:
       - name: go test -race
         run: go test -race ./...
 
+  # The default build leaves most optional feature tags off, so the test files
+  # gated behind them (sqlite3_opt_*_test.go) never compile in the matrix above.
+  # This job turns each one on in its own leg so those tests actually run. Tags
+  # are platform-agnostic compile concerns, so one Linux x64 runner is enough —
+  # crossing them with the OS/arch matrix would multiply legs for no new signal.
+  # Plain `go test` (not -race): the race detector already runs on the default
+  # build across all three platforms; these legs exist to exercise tag-gated
+  # code paths, not to re-check concurrency. sqlite_userauth is intentionally
+  # absent — upstream neutered the tag (every connection errors out), so its
+  # test file can no longer pass; see sqlite3_opt_userauth.go.
+  features:
+    name: Feature tag (${{ matrix.tag }})
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        tag:
+          - sqlite_column_metadata
+          - sqlite_math_functions
+          - sqlite_preupdate_hook
+          - sqlite_unlock_notify
+          - sqlite_vtable
+          - sqlite_fts5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: go test -tags ${{ matrix.tag }}
+        run: go test -tags ${{ matrix.tag }} ./...
+
   lint:
     name: Lint
     runs-on: blacksmith-2vcpu-ubuntu-2404

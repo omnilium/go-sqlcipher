@@ -76,7 +76,7 @@ The fork uses its **own independent semver line starting at `v0.1.0`** — it is
 
 ## Building and testing
 
-CGo build; a C toolchain **and OpenSSL `libcrypto` (headers + library)** are required — see *Crypto provider and platform support* above. These are the gates CI enforces:
+CGo build; a C toolchain **and OpenSSL `libcrypto` (headers + library)** are required — see *Crypto provider and platform support* above. These are the core gates CI enforces (it adds a feature-tag matrix on top — see below):
 
 ```sh
 go build ./...
@@ -87,11 +87,11 @@ govulncheck ./...
 
 The SQLCipher round-trip / wrong-key / cipher-tuning / `sqlcipher`-CLI-interop tests live in `sqlcipher_test.go`; the CLI-interop tests skip themselves if no `sqlcipher` binary is on `PATH`.
 
-Build tags follow upstream (e.g. `sqlite_fts5`, `sqlite_userauth`, `libsqlite3`); see the `sqlite3_opt_*.go` files.
+Build tags follow upstream (e.g. `sqlite_fts5`, `sqlite_vtable`, `libsqlite3`); see the `sqlite3_opt_*.go` files.
 
-CI builds and race-tests across every supported target — Linux x86-64, Linux ARM64, and Apple Silicon macOS — on Blacksmith runners, and lints + vuln-scans on Linux x86-64. Each runner gets OpenSSL provisioned first (`libssl-dev` on Linux, Homebrew `openssl` on macOS) so the SQLCipher cgo build links.
+CI builds and race-tests across every supported target — Linux x86-64, Linux ARM64, and Apple Silicon macOS — on Blacksmith runners, and lints + vuln-scans on Linux x86-64. A separate feature-tag matrix turns on each optional build tag whose test file the default build leaves uncompiled (`sqlite_column_metadata`, `sqlite_math_functions`, `sqlite_preupdate_hook`, `sqlite_unlock_notify`, `sqlite_vtable`, plus `sqlite_fts5`) and runs the suite under it on Linux x86-64, so those tag-gated tests are actually exercised. (`sqlite_userauth` is excluded: upstream neutered the tag — every connection now errors — so its test file can no longer pass.) Each runner gets OpenSSL provisioned first (`libssl-dev` on Linux, Homebrew `openssl` on macOS) so the SQLCipher cgo build links.
 
-> **Planned testing improvements.** We still plan to add (1) a matrix that builds with the optional feature tags so the tag-gated test files are actually exercised, and (2) native Go fuzz targets for SQL and database-file parsing.
+> **Planned testing improvements.** We still plan to add native Go fuzz targets for SQL and database-file parsing.
 
 ## License
 
