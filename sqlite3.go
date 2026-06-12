@@ -556,7 +556,6 @@ type aggInfo struct {
 func (ai *aggInfo) agg(ctx *C.sqlite3_context) (int64, reflect.Value, error) {
 	aggIdx := (*int64)(C.sqlite3_aggregate_context(ctx, C.int(8)))
 	if *aggIdx == 0 {
-		*aggIdx = ai.next
 		ret := ai.constructor.Call(nil)
 		if len(ret) == 2 && ret[1].Interface() != nil {
 			return 0, reflect.Value{}, ret[1].Interface().(error)
@@ -564,6 +563,10 @@ func (ai *aggInfo) agg(ctx *C.sqlite3_context) (int64, reflect.Value, error) {
 		if ret[0].IsNil() {
 			return 0, reflect.Value{}, errors.New("aggregator constructor returned nil state")
 		}
+		// Assign the slot only after a successful construction. Setting it
+		// earlier left a non-zero index with no active entry, so xFinal's
+		// Done() would skip reconstruction and panic on a zero reflect.Value.
+		*aggIdx = ai.next
 		ai.next++
 		ai.active[*aggIdx] = ret[0]
 	}
@@ -1084,12 +1087,14 @@ func (c *SQLiteConn) begin(ctx context.Context) (driver.Tx, error) {
 }
 
 // quoteKey renders a SQLCipher key for a "PRAGMA key" statement. A raw key in
-// x'<hex>' form (a blob literal) is emitted verbatim; any other value is treated
-// as a passphrase and wrapped as a single-quoted SQL string literal, with
-// embedded single quotes doubled per SQL escaping rules.
+// x'<hex>' form (a blob literal) is wrapped in double quotes — SQLCipher's
+// required form for a raw key, PRAGMA key = "x'...'"; a bare blob literal is a
+// syntax error there. Any other value is treated as a passphrase and wrapped as
+// a single-quoted SQL string literal. Either way embedded quotes are doubled per
+// SQL escaping rules so the DSN value cannot break out of the literal.
 func quoteKey(k string) string {
 	if len(k) >= 3 && (k[0] == 'x' || k[0] == 'X') && k[1] == '\'' && k[len(k)-1] == '\'' {
-		return k
+		return `"` + strings.ReplaceAll(k, `"`, `""`) + `"`
 	}
 	return "'" + strings.ReplaceAll(k, "'", "''") + "'"
 }

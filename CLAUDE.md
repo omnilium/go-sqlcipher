@@ -45,7 +45,6 @@ Linting is golangci-lint v2 with the Omnilium house config (`.golangci.yaml`). T
 - `exhaustive` ignores `reflect.Kind` and the cgo `_Ctype_int` type — they are type-dispatch switches, not domain enums.
 - `gocritic`'s `dupSubExpr` is excluded — it misfires on cgo wrapper calls (`C.sqlite3_*`).
 - `revive`'s ALL_CAPS rule is excluded — the `SQLITE_*` constants mirror SQLite's C API and are public (drop-in) API.
-- `unused` is excluded for `convert.go` — it's used only under the `sqlite_preupdate_hook` build tag, which the default-build linter can't see.
 - The opt-in, deliberately-weak SHA1 crypt encoders are marked `//nolint:gosec` with justification (golangci honours `//nolint`, not gosec's native `//nosec`).
 - Issue caps are disabled (`max-issues-per-linter`/`max-same-issues: 0`) so nothing is silently truncated.
 

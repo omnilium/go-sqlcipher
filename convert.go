@@ -6,6 +6,11 @@
 
 // Type conversions for Scan.
 
+// These helpers are consumed solely by the preupdate-hook value decoder
+// (sqlite3_opt_preupdate_hook.go), so this file is compiled only under the same
+// build tag; without it the code is unreachable dead weight in the default build.
+//go:build sqlite_preupdate_hook
+
 package sqlite3
 
 import (

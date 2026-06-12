@@ -57,11 +57,6 @@ linters:
       # cgo-wide false positive in this package's binding glue.
       - linters: [gocritic]
         text: dupSubExpr
-      # convert.go is consumed by sqlite3_opt_preupdate_hook.go under the
-      # sqlite_preupdate_hook build tag, so it is not actually dead — the
-      # unused linter only sees the default build.
-      - path: convert\.go
-        linters: [unused]
 
 formatters:
   enable:
