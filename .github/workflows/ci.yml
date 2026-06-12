@@ -93,6 +93,32 @@ jobs:
       - name: go test -tags ${{ matrix.tag }}
         run: go test -tags ${{ matrix.tag }} ./...
 
+  # Native Go fuzz targets (fuzz_test.go) run a short mutation smoke per target.
+  # Their seed corpora already run as ordinary subtests in the jobs above; this
+  # job adds coverage-guided mutation for a bounded time to surface crashes the
+  # seeds don't. One target per leg because `go test -fuzz` fuzzes a single
+  # target at a time. Like lint/vuln these are platform-agnostic parser/decoder
+  # checks, so one Linux x64 runner is enough; plain `go test` (the default build
+  # already carries race coverage across all three platforms). `-run '^$'` skips
+  # the unit suite so each leg only fuzzes.
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - FuzzExecSQL
+          - FuzzDSN
+          - FuzzDatabaseFile
+          - FuzzTimestampDecode
+          - FuzzQuoteKey
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: go test -fuzz ${{ matrix.target }}
+        run: go test -run '^$' -fuzz '^${{ matrix.target }}$' -fuzztime=30s .
+
   lint:
     name: Lint
     runs-on: blacksmith-2vcpu-ubuntu-2404

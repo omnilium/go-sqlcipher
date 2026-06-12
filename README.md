@@ -89,9 +89,23 @@ The SQLCipher round-trip / wrong-key / cipher-tuning / `sqlcipher`-CLI-interop t
 
 Build tags follow upstream (e.g. `sqlite_fts5`, `sqlite_vtable`, `libsqlite3`); see the `sqlite3_opt_*.go` files.
 
-CI builds and race-tests across every supported target — Linux x86-64, Linux ARM64, and Apple Silicon macOS — on Blacksmith runners, and lints + vuln-scans on Linux x86-64. A separate feature-tag matrix turns on each optional build tag whose test file the default build leaves uncompiled (`sqlite_column_metadata`, `sqlite_math_functions`, `sqlite_preupdate_hook`, `sqlite_unlock_notify`, `sqlite_vtable`, plus `sqlite_fts5`) and runs the suite under it on Linux x86-64, so those tag-gated tests are actually exercised. (`sqlite_userauth` is excluded: upstream neutered the tag — every connection now errors — so its test file can no longer pass.) Each runner gets OpenSSL provisioned first (`libssl-dev` on Linux, Homebrew `openssl` on macOS) so the SQLCipher cgo build links.
+CI builds and race-tests across every supported target — Linux x86-64, Linux ARM64, and Apple Silicon macOS — on Blacksmith runners, and lints + vuln-scans on Linux x86-64. A separate feature-tag matrix turns on each optional build tag whose test file the default build leaves uncompiled (`sqlite_column_metadata`, `sqlite_math_functions`, `sqlite_preupdate_hook`, `sqlite_unlock_notify`, `sqlite_vtable`, plus `sqlite_fts5`) and runs the suite under it on Linux x86-64, so those tag-gated tests are actually exercised. (`sqlite_userauth` is excluded: upstream neutered the tag — every connection now errors — so its test file can no longer pass.) A fuzz matrix runs each native Go fuzz target (see below) under a short `-fuzztime` mutation smoke on Linux x86-64. Each runner gets OpenSSL provisioned first (`libssl-dev` on Linux, Homebrew `openssl` on macOS) so the SQLCipher cgo build links.
 
-> **Planned testing improvements.** We still plan to add native Go fuzz targets for SQL and database-file parsing.
+### Fuzzing
+
+`fuzz_test.go` carries native Go [fuzz targets](https://go.dev/doc/security/fuzz/) over the driver's untrusted-input boundaries. Their seed corpora run as ordinary subtests under a plain `go test`; CI also runs each under a bounded mutation smoke. To fuzz one locally:
+
+```sh
+go test -run '^$' -fuzz '^FuzzExecSQL$' -fuzztime=30s .
+```
+
+The targets are:
+
+- **`FuzzExecSQL`** — arbitrary statement text through prepare / step / scan.
+- **`FuzzDSN`** — arbitrary connection-string options through the DSN parser (including this fork's `_key` and cipher-tuning options).
+- **`FuzzDatabaseFile`** — arbitrary bytes opened as a database file, exercising the page parser and codec on malformed headers.
+- **`FuzzTimestampDecode`** — arbitrary text read back through the `DATE`/`DATETIME`/`TIMESTAMP` parser.
+- **`FuzzQuoteKey`** — asserts the fork's key-quoting is injection-safe: for any key, `quoteKey` must produce exactly one well-formed SQL literal that decodes back to the original, so a key can never break out of `PRAGMA key = …`.
 
 ## License
 
