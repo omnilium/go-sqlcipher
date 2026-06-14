@@ -17,6 +17,6 @@ package sqlite3
 // If there is an existing preupdate hook for this connection, it will be
 // removed. If callback is nil the existing hook (if any) will be removed
 // without creating a new one.
-func (c *SQLiteConn) RegisterPreUpdateHook(callback func(SQLitePreUpdateData)) {
+func (c *SQLiteConn) RegisterPreUpdateHook(_ func(SQLitePreUpdateData)) {
 	// NOOP
 }

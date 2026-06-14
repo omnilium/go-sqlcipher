@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS test_table (
 func randStringBytes(n int) string {
 	b := make([]byte, n)
 	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+		b[i] = letterBytes[rand.Intn(len(letterBytes))] //nolint:gosec // non-security test data
 	}
 	return string(b)
 }
@@ -325,7 +325,7 @@ func TestStmtReadonly(t *testing.T) {
 		}
 
 		var ro bool
-		c.Raw(func(dc any) error {
+		_ = c.Raw(func(dc any) error {
 			stmt, err := dc.(*SQLiteConn).Prepare(query)
 			if err != nil {
 				return err

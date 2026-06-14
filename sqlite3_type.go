@@ -34,13 +34,13 @@ func (rc *SQLiteRows) ColumnTypePrecisionScale(index int) (precision, scale int6
 */
 
 // ColumnTypeNullable implement RowsColumnTypeNullable.
-func (rc *SQLiteRows) ColumnTypeNullable(i int) (nullable, ok bool) {
+func (rc *SQLiteRows) ColumnTypeNullable(_ int) (nullable, ok bool) {
 	return true, true
 }
 
 // ColumnTypeScanType implement RowsColumnTypeScanType.
 func (rc *SQLiteRows) ColumnTypeScanType(i int) reflect.Type {
-	//ct := C.sqlite3_column_type(rc.s.s, C.int(i))  // Always returns 5
+	// ct := C.sqlite3_column_type(rc.s.s, C.int(i))  // Always returns 5
 	return scanType(C.GoString(C.sqlite3_column_decltype(rc.s.s, C.int(i))))
 }
 

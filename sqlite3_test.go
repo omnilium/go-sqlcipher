@@ -14,7 +14,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"io/ioutil"
+
 	"math/rand"
 	"net/url"
 	"os"
@@ -29,11 +29,11 @@ import (
 )
 
 func TempFilename(t testing.TB) string {
-	f, err := ioutil.TempFile("", "go-sqlite3-test-")
+	f, err := os.CreateTemp("", "go-sqlite3-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	_ = f.Close()
 	return f.Name()
 }
 
@@ -119,7 +119,7 @@ func TestOpenWithVFS(t *testing.T) {
 	if err == nil {
 		t.Fatal("Failed to open", err)
 	}
-	db.Close()
+	_ = db.Close()
 
 	defer os.Remove(filename)
 
@@ -137,7 +137,7 @@ func TestOpenWithVFS(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to ping", err)
 	}
-	db.Close()
+	_ = db.Close()
 }
 
 func TestOpenNoCreate(t *testing.T) {
@@ -206,7 +206,7 @@ func TestReadonly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db1.Exec("CREATE TABLE test (x int, y float)")
+	_, _ = db1.Exec("CREATE TABLE test (x int, y float)")
 
 	db2, err := sql.Open("sqlite3", "file:"+tempFilename+"?mode=ro")
 	if err != nil {
@@ -229,14 +229,14 @@ func TestForeignKeys(t *testing.T) {
 		uri := "file:" + fname + option
 		db, err := sql.Open("sqlite3", uri)
 		if err != nil {
-			os.Remove(fname)
+			_ = os.Remove(fname)
 			t.Errorf("sql.Open(\"sqlite3\", %q): %v", uri, err)
 			continue
 		}
 		var enabled bool
 		err = db.QueryRow("PRAGMA foreign_keys;").Scan(&enabled)
-		db.Close()
-		os.Remove(fname)
+		_ = db.Close()
+		_ = os.Remove(fname)
 		if err != nil {
 			t.Errorf("query foreign_keys for %s: %v", uri, err)
 			continue
@@ -253,7 +253,7 @@ func TestDeferredForeignKey(t *testing.T) {
 	uri := "file:" + fname + "?_foreign_keys=1"
 	db, err := sql.Open("sqlite3", uri)
 	if err != nil {
-		os.Remove(fname)
+		_ = os.Remove(fname)
 		t.Errorf("sql.Open(\"sqlite3\", %q): %v", uri, err)
 	}
 	_, err = db.Exec("CREATE TABLE bar (id INTEGER PRIMARY KEY)")
@@ -281,8 +281,8 @@ func TestDeferredForeignKey(t *testing.T) {
 		t.Errorf("Failed to begin transaction: %v", err)
 	}
 
-	db.Close()
-	os.Remove(fname)
+	_ = db.Close()
+	_ = os.Remove(fname)
 }
 
 func TestRecursiveTriggers(t *testing.T) {
@@ -295,14 +295,14 @@ func TestRecursiveTriggers(t *testing.T) {
 		uri := "file:" + fname + option
 		db, err := sql.Open("sqlite3", uri)
 		if err != nil {
-			os.Remove(fname)
+			_ = os.Remove(fname)
 			t.Errorf("sql.Open(\"sqlite3\", %q): %v", uri, err)
 			continue
 		}
 		var enabled bool
 		err = db.QueryRow("PRAGMA recursive_triggers;").Scan(&enabled)
-		db.Close()
-		os.Remove(fname)
+		_ = db.Close()
+		_ = os.Remove(fname)
 		if err != nil {
 			t.Errorf("query recursive_triggers for %s: %v", uri, err)
 			continue
@@ -322,7 +322,7 @@ func TestClose(t *testing.T) {
 		t.Fatal("Failed to open database:", err)
 	}
 
-	_, err = db.Exec("drop table foo")
+	_, _ = db.Exec("drop table foo")
 	_, err = db.Exec("create table foo (id integer)")
 	if err != nil {
 		t.Fatal("Failed to create table:", err)
@@ -333,7 +333,7 @@ func TestClose(t *testing.T) {
 		t.Fatal("Failed to select records:", err)
 	}
 
-	db.Close()
+	_ = db.Close()
 	_, err = stmt.Exec(1)
 	if err == nil {
 		t.Fatal("Failed to operate closed statement")
@@ -349,7 +349,7 @@ func TestInsert(t *testing.T) {
 	}
 	defer db.Close()
 
-	_, err = db.Exec("drop table foo")
+	_, _ = db.Exec("drop table foo")
 	_, err = db.Exec("create table foo (id integer)")
 	if err != nil {
 		t.Fatal("Failed to create table:", err)
@@ -373,7 +373,7 @@ func TestInsert(t *testing.T) {
 	rows.Next()
 
 	var result int
-	rows.Scan(&result)
+	_ = rows.Scan(&result)
 	if result != 123 {
 		t.Errorf("Expected %d for fetched result, but %d:", 123, result)
 	}
@@ -392,7 +392,7 @@ func TestUpsert(t *testing.T) {
 	}
 	defer db.Close()
 
-	_, err = db.Exec("drop table foo")
+	_, _ = db.Exec("drop table foo")
 	_, err = db.Exec("create table foo (name string primary key, counter integer)")
 	if err != nil {
 		t.Fatal("Failed to create table:", err)
@@ -418,7 +418,7 @@ func TestUpsert(t *testing.T) {
 
 	var resultName string
 	var resultCounter int
-	rows.Scan(&resultName, &resultCounter)
+	_ = rows.Scan(&resultName, &resultCounter)
 	if resultName != "key" {
 		t.Errorf("Expected %s for fetched result, but %s:", "key", resultName)
 	}
@@ -437,7 +437,7 @@ func TestUpdate(t *testing.T) {
 	}
 	defer db.Close()
 
-	_, err = db.Exec("drop table foo")
+	_, _ = db.Exec("drop table foo")
 	_, err = db.Exec("create table foo (id integer)")
 	if err != nil {
 		t.Fatal("Failed to create table:", err)
@@ -468,7 +468,7 @@ func TestUpdate(t *testing.T) {
 		t.Fatal("Failed to get LastInsertId:", err)
 	}
 	if expected != lastID {
-		t.Errorf("Expected %q for last Id, but %q:", expected, lastID)
+		t.Errorf("Expected %d for last Id, but %d:", expected, lastID)
 	}
 	affected, _ = res.RowsAffected()
 	if err != nil {
@@ -487,7 +487,7 @@ func TestUpdate(t *testing.T) {
 	rows.Next()
 
 	var result int
-	rows.Scan(&result)
+	_ = rows.Scan(&result)
 	if result != 234 {
 		t.Errorf("Expected %d for fetched result, but %d:", 234, result)
 	}
@@ -502,7 +502,7 @@ func TestDelete(t *testing.T) {
 	}
 	defer db.Close()
 
-	_, err = db.Exec("drop table foo")
+	_, _ = db.Exec("drop table foo")
 	_, err = db.Exec("create table foo (id integer)")
 	if err != nil {
 		t.Fatal("Failed to create table:", err)
@@ -521,7 +521,7 @@ func TestDelete(t *testing.T) {
 		t.Fatal("Failed to get RowsAffected:", err)
 	}
 	if affected != 1 {
-		t.Errorf("Expected %d for cout of affected rows, but %q:", 1, affected)
+		t.Errorf("Expected %d for cout of affected rows, but %d:", 1, affected)
 	}
 
 	res, err = db.Exec("delete from foo where id = 123")
@@ -533,14 +533,14 @@ func TestDelete(t *testing.T) {
 		t.Fatal("Failed to get LastInsertId:", err)
 	}
 	if expected != lastID {
-		t.Errorf("Expected %q for last Id, but %q:", expected, lastID)
+		t.Errorf("Expected %d for last Id, but %d:", expected, lastID)
 	}
 	affected, err = res.RowsAffected()
 	if err != nil {
 		t.Fatal("Failed to get RowsAffected:", err)
 	}
 	if affected != 1 {
-		t.Errorf("Expected %d for cout of affected rows, but %q:", 1, affected)
+		t.Errorf("Expected %d for cout of affected rows, but %d:", 1, affected)
 	}
 
 	rows, err := db.Query("select id from foo")
@@ -563,7 +563,7 @@ func TestBooleanRoundtrip(t *testing.T) {
 	}
 	defer db.Close()
 
-	_, err = db.Exec("DROP TABLE foo")
+	_, _ = db.Exec("DROP TABLE foo")
 	_, err = db.Exec("CREATE TABLE foo(id INTEGER, value BOOL)")
 	if err != nil {
 		t.Fatal("Failed to create table:", err)
@@ -614,7 +614,7 @@ func TestTimestamp(t *testing.T) {
 	}
 	defer db.Close()
 
-	_, err = db.Exec("DROP TABLE foo")
+	_, _ = db.Exec("DROP TABLE foo")
 	_, err = db.Exec("CREATE TABLE foo(id INTEGER, ts timeSTAMP, dt DATETIME)")
 	if err != nil {
 		t.Fatal("Failed to create table:", err)
@@ -920,7 +920,7 @@ func TestTransaction(t *testing.T) {
 		t.Fatal("Failed to commit transaction:", err)
 	}
 
-	rows, err = tx.Query("SELECT id from foo")
+	_, err = tx.Query("SELECT id from foo")
 	if err == nil {
 		t.Fatal("Expected failure to query")
 	}
@@ -983,7 +983,7 @@ func TestTimezoneConversion(t *testing.T) {
 		}
 		defer db.Close()
 
-		_, err = db.Exec("DROP TABLE foo")
+		_, _ = db.Exec("DROP TABLE foo")
 		_, err = db.Exec("CREATE TABLE foo(id INTEGER, ts TIMESTAMP, dt DATETIME)")
 		if err != nil {
 			t.Fatal("Failed to create table:", err)
@@ -1131,7 +1131,7 @@ func TestQueryer(t *testing.T) {
 		if id != n+1 {
 			t.Error("Failed to db.Query: not matched results")
 		}
-		n = n + 1
+		n++
 	}
 	if err := rows.Err(); err != nil {
 		t.Errorf("Post-scan failed: %v\n", err)
@@ -1148,10 +1148,10 @@ func TestStress(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to open database:", err)
 	}
-	db.Exec("CREATE TABLE foo (id int);")
-	db.Exec("INSERT INTO foo VALUES(1);")
-	db.Exec("INSERT INTO foo VALUES(2);")
-	db.Close()
+	_, _ = db.Exec("CREATE TABLE foo (id int);")
+	_, _ = db.Exec("INSERT INTO foo VALUES(1);")
+	_, _ = db.Exec("INSERT INTO foo VALUES(2);")
+	_ = db.Close()
 
 	for i := 0; i < 10000; i++ {
 		db, err := sql.Open("sqlite3", tempFilename)
@@ -1173,9 +1173,9 @@ func TestStress(t *testing.T) {
 			if err := rows.Err(); err != nil {
 				t.Errorf("Post-scan failed: %v\n", err)
 			}
-			rows.Close()
+			_ = rows.Close()
 		}
-		db.Close()
+		_ = db.Close()
 	}
 }
 
@@ -1187,8 +1187,8 @@ func TestDateTimeLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to open database:", err)
 	}
-	db.Exec("CREATE TABLE foo (dt datetime);")
-	db.Exec("INSERT INTO foo VALUES('2015-03-05 15:16:17');")
+	_, _ = db.Exec("CREATE TABLE foo (dt datetime);")
+	_, _ = db.Exec("INSERT INTO foo VALUES('2015-03-05 15:16:17');")
 
 	row := db.QueryRow("select * from foo")
 	var d time.Time
@@ -1199,7 +1199,7 @@ func TestDateTimeLocal(t *testing.T) {
 	if d.Hour() == 15 || !strings.Contains(d.String(), "JST") {
 		t.Fatal("Result should have timezone", d)
 	}
-	db.Close()
+	_ = db.Close()
 
 	db, err = sql.Open("sqlite3", tempFilename)
 	if err != nil {
@@ -1223,9 +1223,9 @@ func TestDateTimeLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal("Failed to parse datetime:", err)
 	}
-	db.Exec("INSERT INTO foo VALUES(?);", dt)
+	_, _ = db.Exec("INSERT INTO foo VALUES(?);", dt)
 
-	db.Close()
+	_ = db.Close()
 	db, err = sql.Open("sqlite3", tempFilename+"?_loc="+zone)
 	if err != nil {
 		t.Fatal("Failed to open database:", err)
@@ -1305,7 +1305,7 @@ func (t TimeStamp) Scan(value any) error {
 }
 
 func (t TimeStamp) Value() (driver.Value, error) {
-	return t.Time.Format(CurrentTimeStamp), nil
+	return t.Format(CurrentTimeStamp), nil
 }
 
 func TestDateTimeNow(t *testing.T) {
@@ -1329,12 +1329,10 @@ func TestFunctionRegistration(t *testing.T) {
 	addi64 := func(a, b int64) int64 { return a + b }
 	addu8_16_32 := func(a uint8, b uint16) uint32 { return uint32(a) + uint32(b) }
 	addu64 := func(a, b uint64) uint64 { return a + b }
-	addiu := func(a int, b uint) int64 { return int64(a) + int64(b) }
+	addiu := func(a int, b uint) int64 { return int64(a) + int64(b) } //nolint:gosec // test helper with controlled inputs
 	addf32_64 := func(a float32, b float64) float64 { return float64(a) + b }
 	not := func(a bool) bool { return !a }
-	regex := func(re, s string) (bool, error) {
-		return regexp.MatchString(re, s)
-	}
+	regex := regexp.MatchString
 	generic := func(a any) int64 {
 		switch a.(type) {
 		case int64:
@@ -1718,7 +1716,7 @@ func TestPinger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	_ = db.Close()
 	err = db.Ping()
 	if err == nil {
 		t.Fatal("Should be closed")
@@ -1791,7 +1789,7 @@ func TestAuthorizer(t *testing.T) {
 
 	sql.Register("sqlite3_Authorizer", &SQLiteDriver{
 		ConnectHook: func(conn *SQLiteConn) error {
-			conn.RegisterAuthorizer(func(op int, arg1, arg2, arg3 string) int {
+			conn.RegisterAuthorizer(func(_ int, _, _, _ string) int {
 				return authorizerReturn
 			})
 			return nil
@@ -1886,7 +1884,7 @@ func TestSetFileControlInt64(t *testing.T) {
 		if err != nil {
 			t.Fatal("Failed to ping", err)
 		}
-		db.Close()
+		_ = db.Close()
 	})
 }
 
@@ -1993,7 +1991,7 @@ func TestNamedParam(t *testing.T) {
 	}
 	defer db.Close()
 
-	_, err = db.Exec("drop table foo")
+	_, _ = db.Exec("drop table foo")
 	_, err = db.Exec("create table foo (id integer, name text, amount integer)")
 	if err != nil {
 		t.Fatal("Failed to create table:", err)
@@ -2017,7 +2015,7 @@ func TestNamedParam(t *testing.T) {
 
 	var id, amount int
 	var name string
-	rows.Scan(&id, &name, &amount)
+	_ = rows.Scan(&id, &name, &amount)
 	if id != 2 || name != "grault" || amount != 123 {
 		t.Errorf("Expected %d, %q, %d for fetched result, but got %d, %q, %d:", 2, "grault", 123, id, name, amount)
 	}
@@ -2091,7 +2089,7 @@ func TestQueryCommentOnly(t *testing.T) {
 		if rows.Next() {
 			t.Errorf("Query(%q): expected no rows", q)
 		}
-		rows.Close()
+		_ = rows.Close()
 
 		if _, err := db.Exec(q); err != nil {
 			t.Errorf("Exec(%q): unexpected error: %v", q, err)
@@ -2174,7 +2172,7 @@ func initializeTestDB(t testing.TB) {
 	tempFilename := TempFilename(t)
 	d, err := sql.Open("sqlite3", tempFilename+"?_busy_timeout=99999")
 	if err != nil {
-		os.Remove(tempFilename)
+		_ = os.Remove(tempFilename)
 		t.Fatal(err)
 	}
 
@@ -2182,7 +2180,7 @@ func initializeTestDB(t testing.TB) {
 }
 
 func freeTestDB() {
-	err := db.DB.Close()
+	err := db.Close()
 	if err != nil {
 		panic(err)
 	}
@@ -2239,16 +2237,16 @@ func (db *TestDB) tearDown() {
 
 // q replaces ? parameters if needed
 func (db *TestDB) q(sql string) string {
-	switch db.dialect {
-	case POSTGRESQL: // replace with $1, $2, ..
-		qrx := regexp.MustCompile(`\?`)
-		n := 0
-		return qrx.ReplaceAllStringFunc(sql, func(string) string {
-			n++
-			return "$" + strconv.Itoa(n)
-		})
+	if db.dialect != POSTGRESQL {
+		return sql
 	}
-	return sql
+	// replace with $1, $2, ..
+	qrx := regexp.MustCompile(`\?`)
+	n := 0
+	return qrx.ReplaceAllStringFunc(sql, func(string) string {
+		n++
+		return "$" + strconv.Itoa(n)
+	})
 }
 
 func (db *TestDB) blobType(size int) string {
@@ -2271,18 +2269,6 @@ func (db *TestDB) serialPK() string {
 		return "serial primary key"
 	case MYSQL:
 		return "integer primary key auto_increment"
-	}
-	panic("unknown dialect")
-}
-
-func (db *TestDB) now() string {
-	switch db.dialect {
-	case SQLITE:
-		return "datetime('now')"
-	case POSTGRESQL:
-		return "now()"
-	case MYSQL:
-		return "now()"
 	}
 	panic("unknown dialect")
 }
@@ -2462,7 +2448,7 @@ func testTxQuery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.Exec("create table foo (id integer primary key, name varchar(50))")
 	if err != nil {
@@ -2525,7 +2511,7 @@ func testPreparedStmt(t *testing.T) {
 					t.Errorf("Query: %v", err)
 					return
 				}
-				if _, err := ins.Exec(rand.Intn(100)); err != nil {
+				if _, err := ins.Exec(rand.Intn(100)); err != nil { //nolint:gosec // non-security test data
 					t.Errorf("Insert: %v", err)
 					return
 				}

@@ -1,0 +1,68 @@
+# golangci-lint v2 configuration
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+# Report every finding — no per-linter or same-text caps — so the whole tree is
+# actually held to the bar rather than a truncated sample.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters:
+  default: standard
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - misspell
+    - gocritic
+    - revive
+    - bodyclose
+    - exhaustive
+    - prealloc
+    - unconvert
+    - gosec
+    - nilnil
+
+  settings:
+    exhaustive:
+      # The driver's type dispatch switches over reflect.Kind and SQLite's
+      # value-type codes are intentionally partial with a default branch — they
+      # are not domain enums that must be exhausted.
+      default-signifies-exhaustive: true
+      # reflect.Kind is not a domain enum; the cgo C `int` type (_Ctype_int)
+      # only looks like an enum because unrelated consts share it (e.g.
+      # ErrNoMask alongside the SQLITE_* value-type codes).
+      ignore-enum-types: "reflect\\.Kind|_Ctype_int"
+
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+    warn-unused: true
+    rules:
+      # SQLITE_* identifiers mirror SQLite's C API constant names and are part
+      # of this package's public API; renaming them would break the drop-in
+      # contract with mattn/go-sqlite3 consumers.
+      - linters: [revive]
+        text: "don't use ALL_CAPS in Go names"
+      # gocritic's dupSubExpr misfires on cgo wrapper calls (C.sqlite3_*),
+      # reporting a non-existent identical-operands comparison. This is a
+      # cgo-wide false positive in this package's binding glue.
+      - linters: [gocritic]
+        text: dupSubExpr
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/omnilium

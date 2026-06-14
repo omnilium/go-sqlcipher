@@ -17,6 +17,16 @@ import (
 	"time"
 )
 
+// TestUnlockNotifyGetMissing verifies that looking up an absent handle reports
+// "not found" instead of panicking — a panic here would unwind across the cgo
+// callback boundary and abort the process.
+func TestUnlockNotifyGetMissing(t *testing.T) {
+	tbl := unlock_notify_table{table: make(map[uint]chan struct{})}
+	if c, ok := tbl.get(12345); ok || c != nil {
+		t.Fatalf("get(missing) = (%v, %v), want (nil, false)", c, ok)
+	}
+}
+
 func TestUnlockNotify(t *testing.T) {
 	tempFilename := TempFilename(t)
 	defer os.Remove(tempFilename)

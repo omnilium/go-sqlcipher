@@ -413,6 +413,9 @@ func goMInit(db, pClientData unsafe.Pointer, argc C.int, argv **C.char, pzErr **
 
 //export goVRelease
 func goVRelease(pVTab unsafe.Pointer, isDestroy C.int) *C.char {
+	// The vTab handle is dead once xDisconnect/xDestroy returns; release it so
+	// it does not accumulate in the handle table until the connection closes.
+	defer deleteHandle(pVTab)
 	vt := lookupHandle(pVTab).(*sqliteVTab)
 	var err error
 	if isDestroy == 1 {
@@ -487,6 +490,9 @@ func goVBestIndex(pVTab unsafe.Pointer, icp unsafe.Pointer) *C.char {
 
 //export goVClose
 func goVClose(pCursor unsafe.Pointer) *C.char {
+	// The cursor handle is dead once xClose returns; release it so per-query
+	// cursors do not accumulate in the handle table for the connection's life.
+	defer deleteHandle(pCursor)
 	vtc := lookupHandle(pCursor).(*sqliteVTabCursor)
 	err := vtc.vTabCursor.Close()
 	if err != nil {
@@ -497,6 +503,7 @@ func goVClose(pCursor unsafe.Pointer) *C.char {
 
 //export goMDestroy
 func goMDestroy(pClientData unsafe.Pointer) {
+	defer deleteHandle(pClientData)
 	m := lookupHandle(pClientData).(*sqliteModule)
 	m.module.DestroyModule()
 }

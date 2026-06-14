@@ -62,7 +62,7 @@ func TestSerializeDeserialize(t *testing.T) {
 	}); err != nil {
 		t.Fatal("Failed to serialize source database:", err)
 	}
-	srcConn.Close()
+	_ = srcConn.Close()
 
 	// Confirm that the destination database is initially empty.
 	var destTableCount int
@@ -86,7 +86,7 @@ func TestSerializeDeserialize(t *testing.T) {
 	}); err != nil {
 		t.Fatal("Failed to deserialize source database:", err)
 	}
-	destConn.Close()
+	_ = destConn.Close()
 
 	// Confirm that destination database has been loaded correctly.
 	var destRowCount int

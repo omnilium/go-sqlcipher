@@ -10,7 +10,6 @@ package sqlite3
 
 import (
 	"database/sql"
-	"io/ioutil"
 	"os"
 	"path"
 	"testing"
@@ -24,7 +23,7 @@ func TestSimpleError(t *testing.T) {
 }
 
 func TestCorruptDbErrors(t *testing.T) {
-	dirName, err := ioutil.TempDir("", "sqlite3")
+	dirName, err := os.MkdirTemp("", "sqlite3")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,8 +34,8 @@ func TestCorruptDbErrors(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	f.Write([]byte{1, 2, 3, 4, 5})
-	f.Close()
+	_, _ = f.Write([]byte{1, 2, 3, 4, 5})
+	_ = f.Close()
 
 	db, err := sql.Open("sqlite3", dbFileName)
 	if err == nil {
@@ -53,11 +52,11 @@ func TestCorruptDbErrors(t *testing.T) {
 	if err.Error() == "" {
 		t.Error("wrong error string for corrupted DB")
 	}
-	db.Close()
+	_ = db.Close()
 }
 
 func TestSqlLogicErrors(t *testing.T) {
-	dirName, err := ioutil.TempDir("", "sqlite3")
+	dirName, err := os.MkdirTemp("", "sqlite3")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +83,7 @@ func TestSqlLogicErrors(t *testing.T) {
 }
 
 func TestExtendedErrorCodes_ForeignKey(t *testing.T) {
-	dirName, err := ioutil.TempDir("", "sqlite3-err")
+	dirName, err := os.MkdirTemp("", "sqlite3-err")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +129,7 @@ func TestExtendedErrorCodes_ForeignKey(t *testing.T) {
 }
 
 func TestExtendedErrorCodes_NotNull(t *testing.T) {
-	dirName, err := ioutil.TempDir("", "sqlite3-err")
+	dirName, err := os.MkdirTemp("", "sqlite3-err")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +185,7 @@ func TestExtendedErrorCodes_NotNull(t *testing.T) {
 }
 
 func TestExtendedErrorCodes_Unique(t *testing.T) {
-	dirName, err := ioutil.TempDir("", "sqlite3-err")
+	dirName, err := os.MkdirTemp("", "sqlite3-err")
 	if err != nil {
 		t.Fatal(err)
 	}

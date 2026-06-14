@@ -6,6 +6,11 @@
 
 // Type conversions for Scan.
 
+// These helpers are consumed solely by the preupdate-hook value decoder
+// (sqlite3_opt_preupdate_hook.go), so this file is compiled only under the same
+// build tag; without it the code is unreachable dead weight in the default build.
+//go:build sqlite_preupdate_hook
+
 package sqlite3
 
 import (
@@ -159,7 +164,7 @@ func convertAssign(dest, src any) error {
 	}
 
 	dpv := reflect.ValueOf(dest)
-	if dpv.Kind() != reflect.Ptr {
+	if dpv.Kind() != reflect.Pointer {
 		return errors.New("destination not a pointer")
 	}
 	if dpv.IsNil() {
@@ -192,7 +197,7 @@ func convertAssign(dest, src any) error {
 	// This also allows scanning into user defined types such as "type Int int64".
 	// For symmetry, also check for string destination types.
 	switch dv.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if src == nil {
 			dv.Set(reflect.Zero(dv.Type()))
 			return nil

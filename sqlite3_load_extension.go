@@ -74,7 +74,11 @@ func (c *SQLiteConn) loadExtension(lib string, entry *string) error {
 	}
 
 	var errMsg *C.char
-	defer C.sqlite3_free(unsafe.Pointer(errMsg))
+	// A closure, not `defer C.sqlite3_free(unsafe.Pointer(errMsg))`: deferred
+	// argument values are captured when the defer runs, so a bare defer would
+	// free the nil errMsg, not the buffer sqlite3_load_extension allocates into
+	// it on failure.
+	defer func() { C.sqlite3_free(unsafe.Pointer(errMsg)) }()
 
 	rv := C.sqlite3_load_extension(c.db, clib, centry, &errMsg)
 	if rv != C.SQLITE_OK {

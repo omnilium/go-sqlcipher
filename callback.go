@@ -32,8 +32,20 @@ import (
 	"unsafe"
 )
 
+// recoverCallback turns a panic in user-supplied callback code into a SQLite
+// error result. A Go panic must never unwind across the cgo boundary into
+// SQLite's C frame — that aborts the whole process instead of failing the
+// statement. Deferred at the top of every trampoline that dispatches into a
+// user function or aggregator.
+func recoverCallback(ctx *C.sqlite3_context) {
+	if r := recover(); r != nil {
+		callbackError(ctx, fmt.Errorf("sqlite3: panic in Go callback: %v", r))
+	}
+}
+
 //export callbackTrampoline
 func callbackTrampoline(ctx *C.sqlite3_context, argc int, argv **C.sqlite3_value) {
+	defer recoverCallback(ctx)
 	args := (*[(math.MaxInt32 - 1) / unsafe.Sizeof((*C.sqlite3_value)(nil))]*C.sqlite3_value)(unsafe.Pointer(argv))[:argc:argc]
 	fi := lookupHandle(C.sqlite3_user_data(ctx)).(*functionInfo)
 	fi.Call(ctx, args)
@@ -41,6 +53,7 @@ func callbackTrampoline(ctx *C.sqlite3_context, argc int, argv **C.sqlite3_value
 
 //export stepTrampoline
 func stepTrampoline(ctx *C.sqlite3_context, argc C.int, argv **C.sqlite3_value) {
+	defer recoverCallback(ctx)
 	args := (*[(math.MaxInt32 - 1) / unsafe.Sizeof((*C.sqlite3_value)(nil))]*C.sqlite3_value)(unsafe.Pointer(argv))[:int(argc):int(argc)]
 	ai := lookupHandle(C.sqlite3_user_data(ctx)).(*aggInfo)
 	ai.Step(ctx, args)
@@ -48,6 +61,7 @@ func stepTrampoline(ctx *C.sqlite3_context, argc C.int, argv **C.sqlite3_value) 
 
 //export doneTrampoline
 func doneTrampoline(ctx *C.sqlite3_context) {
+	defer recoverCallback(ctx)
 	ai := lookupHandle(C.sqlite3_user_data(ctx)).(*aggInfo)
 	ai.Done(ctx)
 }
@@ -83,7 +97,7 @@ func authorizerTrampoline(handle unsafe.Pointer, op int, arg1 *C.char, arg2 *C.c
 }
 
 //export preUpdateHookTrampoline
-func preUpdateHookTrampoline(handle unsafe.Pointer, dbHandle uintptr, op int, db *C.char, table *C.char, oldrowid int64, newrowid int64) {
+func preUpdateHookTrampoline(handle unsafe.Pointer, _ uintptr, op int, db *C.char, table *C.char, oldrowid int64, newrowid int64) {
 	hval := lookupHandleVal(handle)
 	data := SQLitePreUpdateData{
 		Conn:         hval.db,
@@ -139,6 +153,21 @@ func deleteHandles(db *SQLiteConn) {
 	}
 }
 
+// deleteHandle removes a single handle and frees its index pointer. It is
+// idempotent: deleting an absent handle (e.g. one already swept by
+// deleteHandles at connection close) is a no-op. Used by the virtual-table
+// teardown callbacks to release per-vTab/per-cursor handles as they are
+// destroyed, rather than letting them accumulate until the connection closes.
+func deleteHandle(handle unsafe.Pointer) {
+	handleLock.Lock()
+	defer handleLock.Unlock()
+	if _, ok := handleVals[handle]; !ok {
+		return
+	}
+	delete(handleVals, handle)
+	C.free(handle)
+}
+
 // This is only here so that tests can refer to it.
 type callbackArgRaw C.sqlite3_value
 
@@ -172,10 +201,7 @@ func callbackArgBool(v *C.sqlite3_value) (reflect.Value, error) {
 		return reflect.Value{}, fmt.Errorf("argument must be an INTEGER")
 	}
 	i := int64(C.sqlite3_value_int64(v))
-	val := false
-	if i != 0 {
-		val = true
-	}
+	val := i != 0
 	return reflect.ValueOf(val), nil
 }
 
@@ -350,7 +376,7 @@ func callbackRetText(ctx *C.sqlite3_context, v reflect.Value) error {
 	return nil
 }
 
-func callbackRetNil(ctx *C.sqlite3_context, v reflect.Value) error {
+func callbackRetNil(_ *C.sqlite3_context, _ reflect.Value) error {
 	return nil
 }
 
