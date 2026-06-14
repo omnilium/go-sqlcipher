@@ -47,6 +47,8 @@ func TestCryptEncoders(t *testing.T) {
 			fn = CryptEncoderSHA512
 		case "ssha512":
 			fn = CryptEncoderSSHA512(e.salt)
+		default:
+			t.Fatalf("unknown encoder %q in test table", e.enc)
 		}
 
 		h := fn([]byte("admin"), nil)

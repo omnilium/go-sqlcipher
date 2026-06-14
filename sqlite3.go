@@ -21,6 +21,20 @@ package sqlite3
 #cgo CFLAGS: -DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1
 #cgo CFLAGS: -DSQLITE_ENABLE_UPDATE_DELETE_LIMIT
 #cgo CFLAGS: -Wno-deprecated-declarations
+// SQLCipher: enable the encryption codec. SQLITE_HAS_CODEC activates the
+// SQLCipher codec hooks; SQLITE_TEMP_STORE=2 is required so temp data never
+// lands unencrypted on disk; SQLITE_EXTRA_INIT/SHUTDOWN register and tear down
+// SQLCipher's crypto provider at library init. The crypto provider itself
+// (OpenSSL) is selected and linked by sqlite3_crypto_openssl.go.
+#cgo CFLAGS: -DSQLITE_HAS_CODEC
+#cgo CFLAGS: -DSQLITE_TEMP_STORE=2
+#cgo CFLAGS: -DSQLITE_EXTRA_INIT=sqlcipher_extra_init
+#cgo CFLAGS: -DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown
+// SQLCipher's codec uses fixed-width <stdint.h> types (uint64_t) directly. The
+// amalgamation only pulls in <stdint.h> under HAVE_STDINT_H, which is otherwise
+// set by the autoconf sqlite_cfg.h we don't compile with; define it here so the
+// codec sees the C99 integer types.
+#cgo CFLAGS: -DHAVE_STDINT_H=1
 #cgo openbsd CFLAGS: -I/usr/local/include
 #cgo openbsd LDFLAGS: -L/usr/local/lib
 #ifndef USE_LIBSQLITE3
@@ -330,7 +344,7 @@ const (
 )
 
 // This variable can be replaced with -ldflags like below:
-// go build -ldflags="-X 'github.com/mattn/go-sqlite3.driverName=my-sqlite3'"
+// go build -ldflags="-X 'github.com/omnilium/go-sqlcipher.driverName=my-sqlite3'"
 var driverName = "sqlite3"
 
 func init() {
@@ -445,12 +459,12 @@ type SQLiteDriver struct {
 
 // SQLiteConn implements driver.Conn.
 type SQLiteConn struct {
-	mu             sync.Mutex
-	db             *C.sqlite3
-	loc            *time.Location
-	txlock         string
-	funcs          []*functionInfo
-	aggregators    []*aggInfo
+	mu          sync.Mutex
+	db          *C.sqlite3
+	loc         *time.Location
+	txlock      string
+	funcs       []*functionInfo
+	aggregators []*aggInfo
 	// Prepared-statement cache. The slice is allocated at Open with a
 	// fixed capacity equal to the configured cache size; cap bounds the
 	// cache, len is the live count, and entries are ordered LRU-first
@@ -541,8 +555,13 @@ type aggInfo struct {
 
 func (ai *aggInfo) agg(ctx *C.sqlite3_context) (int64, reflect.Value, error) {
 	aggIdx := (*int64)(C.sqlite3_aggregate_context(ctx, C.int(8)))
+	if aggIdx == nil {
+		// sqlite3_aggregate_context returns NULL only when it cannot allocate
+		// the requested bytes. Surface it as an error rather than dereferencing
+		// NULL and crashing the process through the cgo boundary.
+		return 0, reflect.Value{}, errors.New("out of memory")
+	}
 	if *aggIdx == 0 {
-		*aggIdx = ai.next
 		ret := ai.constructor.Call(nil)
 		if len(ret) == 2 && ret[1].Interface() != nil {
 			return 0, reflect.Value{}, ret[1].Interface().(error)
@@ -550,6 +569,10 @@ func (ai *aggInfo) agg(ctx *C.sqlite3_context) (int64, reflect.Value, error) {
 		if ret[0].IsNil() {
 			return 0, reflect.Value{}, errors.New("aggregator constructor returned nil state")
 		}
+		// Assign the slot only after a successful construction. Setting it
+		// earlier left a non-zero index with no active entry, so xFinal's
+		// Done() would skip reconstruction and panic on a zero reflect.Value.
+		*aggIdx = ai.next
 		ai.next++
 		ai.active[*aggIdx] = ret[0]
 	}
@@ -606,7 +629,7 @@ func (tx *SQLiteTx) Commit() error {
 		// return from Commit() - we must clean up to honour its semantics.
 		// We don't know if the ROLLBACK is strictly necessary, but according
 		// to sqlite's docs, there is no harm in calling ROLLBACK unnecessarily.
-		tx.c.exec(context.Background(), "ROLLBACK", nil)
+		_, _ = tx.c.exec(context.Background(), "ROLLBACK", nil)
 	}
 	return err
 }
@@ -633,7 +656,7 @@ func (c *SQLiteConn) RegisterCollation(name string, cmp func(string, string) int
 	handle := newHandle(c, cmp)
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
-	rv := C.sqlite3_create_collation(c.db, cname, C.SQLITE_UTF8, handle, (*[0]byte)(unsafe.Pointer(C.compareTrampoline)))
+	rv := C.sqlite3_create_collation(c.db, cname, C.SQLITE_UTF8, handle, (*[0]byte)(C.compareTrampoline))
 	if rv != C.SQLITE_OK {
 		return c.lastError()
 	}
@@ -719,13 +742,13 @@ func (c *SQLiteConn) RegisterFunc(name string, impl any, pure bool) error {
 	fi.f = reflect.ValueOf(impl)
 	t := fi.f.Type()
 	if t.Kind() != reflect.Func {
-		return errors.New("Non-function passed to RegisterFunc")
+		return errors.New("non-function passed to RegisterFunc")
 	}
 	if t.NumOut() != 1 && t.NumOut() != 2 {
 		return errors.New("SQLite functions must return 1 or 2 values")
 	}
 	if t.NumOut() == 2 && !t.Out(1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-		return errors.New("Second return value of SQLite function must be error")
+		return errors.New("second return value of SQLite function must be error")
 	}
 
 	numArgs := t.NumIn()
@@ -807,7 +830,7 @@ func (c *SQLiteConn) RegisterAggregator(name string, impl any, pure bool) error 
 		return errors.New("SQLite aggregator constructors must return 1 or 2 values")
 	}
 	if t.NumOut() == 2 && !t.Out(1).Implements(reflect.TypeOf((*error)(nil)).Elem()) {
-		return errors.New("Second return value of SQLite function must be error")
+		return errors.New("second return value of SQLite function must be error")
 	}
 	if t.NumIn() != 0 {
 		return errors.New("SQLite aggregator constructors must not have arguments")
@@ -815,7 +838,7 @@ func (c *SQLiteConn) RegisterAggregator(name string, impl any, pure bool) error 
 
 	agg := t.Out(0)
 	switch agg.Kind() {
-	case reflect.Ptr, reflect.Interface:
+	case reflect.Pointer, reflect.Interface:
 	default:
 		return errors.New("SQlite aggregator constructor must return a pointer object")
 	}
@@ -833,7 +856,7 @@ func (c *SQLiteConn) RegisterAggregator(name string, impl any, pure bool) error 
 
 	stepNArgs := step.NumIn()
 	start := 0
-	if agg.Kind() == reflect.Ptr {
+	if agg.Kind() == reflect.Pointer {
 		// Skip over the method receiver
 		stepNArgs--
 		start++
@@ -866,7 +889,7 @@ func (c *SQLiteConn) RegisterAggregator(name string, impl any, pure bool) error 
 	}
 	done := doneFn.Type
 	doneNArgs := done.NumIn()
-	if agg.Kind() == reflect.Ptr {
+	if agg.Kind() == reflect.Pointer {
 		// Skip over the method receiver
 		doneNArgs--
 	}
@@ -1069,6 +1092,94 @@ func (c *SQLiteConn) begin(ctx context.Context) (driver.Tx, error) {
 	return &SQLiteTx{c}, nil
 }
 
+// quoteKey renders a SQLCipher key for a "PRAGMA key" statement. A raw key in
+// x'<hex>' form (a blob literal) is wrapped in double quotes — SQLCipher's
+// required form for a raw key, PRAGMA key = "x'...'"; a bare blob literal is a
+// syntax error there. Any other value is treated as a passphrase and wrapped as
+// a single-quoted SQL string literal. Either way embedded quotes are doubled per
+// SQL escaping rules so the DSN value cannot break out of the literal.
+func quoteKey(k string) string {
+	if len(k) >= 3 && (k[0] == 'x' || k[0] == 'X') && k[1] == '\'' && k[len(k)-1] == '\'' {
+		return `"` + strings.ReplaceAll(k, `"`, `""`) + `"`
+	}
+	return "'" + strings.ReplaceAll(k, "'", "''") + "'"
+}
+
+// sqlcipherCipherParams maps DSN query parameters to the SQLCipher PRAGMA that
+// tunes the cipher for opening databases written with non-default settings (or
+// by other SQLCipher versions). They are applied in slice order, immediately
+// after PRAGMA key: cipher_compatibility comes first because it resets the other
+// settings to a SQLCipher-version profile that the individual settings then
+// override. A param whose value is an identifier (an algorithm name) is
+// restricted to identifier characters; the rest are integers. Either way the
+// value cannot inject SQL.
+var sqlcipherCipherParams = []struct {
+	dsn    string
+	pragma string
+	ident  bool
+}{
+	{"_cipher_compatibility", "cipher_compatibility", false},
+	{"_cipher_page_size", "cipher_page_size", false},
+	{"_kdf_iter", "kdf_iter", false},
+	{"_cipher_hmac_algorithm", "cipher_hmac_algorithm", true},
+	{"_cipher_kdf_algorithm", "cipher_kdf_algorithm", true},
+	{"_cipher_plaintext_header_size", "cipher_plaintext_header_size", false},
+}
+
+// isCipherIdent reports whether s is a bare SQLCipher identifier (the form an
+// algorithm value such as HMAC_SHA512 or PBKDF2_HMAC_SHA512 takes): a non-empty
+// run of ASCII letters, digits, and underscores.
+func isCipherIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// stripDriverQueryParams removes the driver's own "_"-prefixed query parameters
+// from a file: URI's query string (dsn[pos] is the '?'), keeping the
+// SQLite-recognized URI parameters — cache, mode, vfs, immutable, ... — and
+// their exact original percent-encoding. The driver consumes its own params
+// (_key, _cipher_*, _auth_*, _loc, ...) before open; forwarding them to SQLite
+// is inert at best and at worst leaves secrets like the encryption key in
+// SQLite's retained URI buffer, reachable via sqlite3_uri_parameter from a
+// loaded extension, custom VFS, or authorizer. SQLite's own URI parameters are
+// never "_"-prefixed, so stripping that set preserves URI semantics.
+func stripDriverQueryParams(dsn string, pos int) string {
+	base, query := dsn[:pos], dsn[pos+1:]
+	kept := make([]string, 0)
+	for _, pair := range strings.Split(query, "&") {
+		if pair == "" {
+			continue
+		}
+		key := pair
+		if i := strings.IndexByte(pair, '='); i >= 0 {
+			key = pair[:i]
+		}
+		// Keys are percent-encoded per RFC 3986; unescape defensively so an
+		// encoded leading "_" still matches. A malformed escape just falls
+		// back to the raw key.
+		if dk, err := url.QueryUnescape(key); err == nil {
+			key = dk
+		}
+		if strings.HasPrefix(key, "_") {
+			continue
+		}
+		kept = append(kept, pair)
+	}
+	if len(kept) == 0 {
+		return base
+	}
+	return base + "?" + strings.Join(kept, "&")
+}
+
 // Open database and return a new connection.
 //
 // A pragma can take either zero or one argument.
@@ -1112,6 +1223,24 @@ func (c *SQLiteConn) begin(ctx context.Context) (driver.Tx, error) {
 //	  does in fact change can result in incorrect query results and/or SQLITE_CORRUPT errors.
 //
 // go-sqlite3 adds the following query parameters to those used by SQLite:
+//
+//	_key=XXX
+//	  SQLCipher encryption key. The value is either a passphrase, which is run
+//	  through SQLCipher's KDF, or a raw key as an x'<hex>' blob literal (a
+//	  64-byte/128-hex-char key, optionally with a 16-byte/32-hex-char salt,
+//	  bypasses the KDF). The key is applied via "PRAGMA key" before the
+//	  connection's first page read, so write/close/reopen round-trips succeed.
+//	  Without _key the connection is an ordinary unencrypted SQLite connection.
+//
+//	_cipher_compatibility=N | _kdf_iter=N | _cipher_page_size=N |
+//	_cipher_hmac_algorithm=X | _cipher_kdf_algorithm=X |
+//	_cipher_plaintext_header_size=N
+//	  SQLCipher cipher-tuning pragmas, for opening databases written with
+//	  non-default cipher settings or by another SQLCipher version. They are
+//	  applied via "PRAGMA <name>" right after _key (cipher_compatibility first,
+//	  as it resets the others to a version profile). The algorithm values are
+//	  bare SQLCipher identifiers (e.g. HMAC_SHA512, PBKDF2_HMAC_SHA512); the rest
+//	  are integers. They have no effect without _key.
 //
 //	_loc=XXX
 //	  Specify location of time format. It's possible to specify "auto".
@@ -1190,6 +1319,12 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	mutex := C.int(C.SQLITE_OPEN_FULLMUTEX)
 	txlock := "BEGIN"
 
+	// SQLCipher encryption key and cipher-tuning pragmas. The key, when set,
+	// must be applied before any statement reads a database page (see below).
+	var encryptionKey string
+	var keySet bool
+	var cipherPragmas []string
+
 	// PRAGMA's
 	autoVacuum := -1
 	busyTimeout := 5000
@@ -1240,7 +1375,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			default:
 				loc, err = time.LoadLocation(val)
 				if err != nil {
-					return nil, fmt.Errorf("Invalid _loc: %v: %v", val, err)
+					return nil, fmt.Errorf("invalid _loc: %v: %v", val, err)
 				}
 			}
 		}
@@ -1253,8 +1388,36 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "full":
 				mutex = C.SQLITE_OPEN_FULLMUTEX
 			default:
-				return nil, fmt.Errorf("Invalid _mutex: %v", val)
+				return nil, fmt.Errorf("invalid _mutex: %v", val)
 			}
+		}
+
+		// _key sets the SQLCipher encryption key. The value is either a
+		// passphrase (run through SQLCipher's KDF) or a raw key in x'<hex>'
+		// blob-literal form. It is applied via "PRAGMA key" before the
+		// connection's first page read; see the apply block after open below.
+		if val := params.Get("_key"); val != "" {
+			encryptionKey = val
+			keySet = true
+		}
+
+		// SQLCipher cipher-tuning pragmas (see sqlcipherCipherParams). Collected
+		// here and applied after PRAGMA key below. Integer values are validated
+		// as integers and identifier values are restricted to identifier
+		// characters, so a malicious DSN cannot inject SQL through them.
+		for _, cp := range sqlcipherCipherParams {
+			val := params.Get(cp.dsn)
+			if val == "" {
+				continue
+			}
+			if cp.ident {
+				if !isCipherIdent(val) {
+					return nil, fmt.Errorf("invalid %s: %q, expecting a SQLCipher identifier", cp.dsn, val)
+				}
+			} else if _, err := strconv.Atoi(val); err != nil {
+				return nil, fmt.Errorf("invalid %s: %q, expecting an integer", cp.dsn, val)
+			}
+			cipherPragmas = append(cipherPragmas, fmt.Sprintf("PRAGMA %s = %s;", cp.pragma, val))
 		}
 
 		// _txlock
@@ -1267,7 +1430,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "deferred":
 				txlock = "BEGIN"
 			default:
-				return nil, fmt.Errorf("Invalid _txlock: %v", val)
+				return nil, fmt.Errorf("invalid _txlock: %v", val)
 			}
 		}
 
@@ -1291,7 +1454,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "2", "incremental":
 				autoVacuum = 2
 			default:
-				return nil, fmt.Errorf("Invalid _auto_vacuum: %v, expecting value of '0 NONE 1 FULL 2 INCREMENTAL'", val)
+				return nil, fmt.Errorf("invalid _auto_vacuum: %v, expecting value of '0 NONE 1 FULL 2 INCREMENTAL'", val)
 			}
 		}
 
@@ -1309,7 +1472,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 		if val := params.Get(pkey); val != "" {
 			iv, err := strconv.ParseInt(val, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("Invalid _busy_timeout: %v: %v", val, err)
+				return nil, fmt.Errorf("invalid _busy_timeout: %v: %v", val, err)
 			}
 			busyTimeout = int(iv)
 		}
@@ -1332,7 +1495,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				caseSensitiveLike = 1
 			default:
-				return nil, fmt.Errorf("Invalid _case_sensitive_like: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _case_sensitive_like: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1354,7 +1517,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				deferForeignKeys = 1
 			default:
-				return nil, fmt.Errorf("Invalid _defer_foreign_keys: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _defer_foreign_keys: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1376,7 +1539,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				foreignKeys = 1
 			default:
-				return nil, fmt.Errorf("Invalid _foreign_keys: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _foreign_keys: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1391,7 +1554,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				ignoreCheckConstraints = 1
 			default:
-				return nil, fmt.Errorf("Invalid _ignore_check_constraints: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _ignore_check_constraints: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1417,7 +1580,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 				// See https://www.sqlite.org/pragma.html#pragma_synchronous
 				synchronousMode = "NORMAL"
 			default:
-				return nil, fmt.Errorf("Invalid _journal: %v, expecting value of 'DELETE TRUNCATE PERSIST MEMORY WAL OFF'", val)
+				return nil, fmt.Errorf("invalid _journal: %v, expecting value of 'DELETE TRUNCATE PERSIST MEMORY WAL OFF'", val)
 			}
 		}
 
@@ -1437,7 +1600,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "NORMAL", "EXCLUSIVE":
 				lockingMode = strings.ToUpper(val)
 			default:
-				return nil, fmt.Errorf("Invalid _locking_mode: %v, expecting value of 'NORMAL EXCLUSIVE", val)
+				return nil, fmt.Errorf("invalid _locking_mode: %v, expecting value of 'NORMAL EXCLUSIVE", val)
 			}
 		}
 
@@ -1452,7 +1615,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				queryOnly = 1
 			default:
-				return nil, fmt.Errorf("Invalid _query_only: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _query_only: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1474,7 +1637,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				recursiveTriggers = 1
 			default:
-				return nil, fmt.Errorf("Invalid _recursive_triggers: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _recursive_triggers: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1491,7 +1654,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "fast":
 				secureDelete = "FAST"
 			default:
-				return nil, fmt.Errorf("Invalid _secure_delete: %v, expecting boolean value of '0 1 false true no yes off on fast'", val)
+				return nil, fmt.Errorf("invalid _secure_delete: %v, expecting boolean value of '0 1 false true no yes off on fast'", val)
 			}
 		}
 
@@ -1511,7 +1674,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "0", "OFF", "1", "NORMAL", "2", "FULL", "3", "EXTRA":
 				synchronousMode = strings.ToUpper(val)
 			default:
-				return nil, fmt.Errorf("Invalid _synchronous: %v, expecting value of '0 OFF 1 NORMAL 2 FULL 3 EXTRA'", val)
+				return nil, fmt.Errorf("invalid _synchronous: %v, expecting value of '0 OFF 1 NORMAL 2 FULL 3 EXTRA'", val)
 			}
 		}
 
@@ -1526,7 +1689,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			case "1", "yes", "true", "on":
 				writableSchema = 1
 			default:
-				return nil, fmt.Errorf("Invalid _writable_schema: %v, expecting boolean value of '0 1 false true no yes off on'", val)
+				return nil, fmt.Errorf("invalid _writable_schema: %v, expecting boolean value of '0 1 false true no yes off on'", val)
 			}
 		}
 
@@ -1537,7 +1700,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 		if val := params.Get("_cache_size"); val != "" {
 			iv, err := strconv.ParseInt(val, 10, 64)
 			if err != nil {
-				return nil, fmt.Errorf("Invalid _cache_size: %v: %v", val, err)
+				return nil, fmt.Errorf("invalid _cache_size: %v: %v", val, err)
 			}
 			cacheSize = &iv
 		}
@@ -1548,10 +1711,10 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 		if val := params.Get("_stmt_cache_size"); val != "" {
 			iv, err := strconv.Atoi(val)
 			if err != nil {
-				return nil, fmt.Errorf("Invalid _stmt_cache_size: %v: %v", val, err)
+				return nil, fmt.Errorf("invalid _stmt_cache_size: %v: %v", val, err)
 			}
 			if iv < 0 {
-				return nil, fmt.Errorf("Invalid _stmt_cache_size: %v, expecting non-negative integer", val)
+				return nil, fmt.Errorf("invalid _stmt_cache_size: %v, expecting non-negative integer", val)
 			}
 			stmtCacheSize = iv
 		}
@@ -1560,7 +1723,12 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			vfsName = val
 		}
 
-		if !strings.HasPrefix(dsn, "file:") {
+		if strings.HasPrefix(dsn, "file:") {
+			// A file: URI's query string is forwarded to SQLite (SQLITE_OPEN_URI),
+			// so strip the driver's own params — keeping the encryption key out of
+			// SQLite's retained URI buffer — while preserving SQLite URI params.
+			dsn = stripDriverQueryParams(dsn, pos)
+		} else {
 			dsn = dsn[:pos]
 		}
 	}
@@ -1599,6 +1767,29 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 		return nil
 	}
 
+	// SQLCipher encryption key.
+	//
+	// The key MUST be applied before any statement touches a database page.
+	// SQLCipher derives the page cipher from the key on the first read; if the
+	// key is set after that (e.g. in a post-open hook), writes appear to work
+	// but reopening the file fails with "file is not a database". Applying it
+	// here, as the very first exec on the connection, is what makes
+	// write -> close -> reopen round-trips succeed.
+	if keySet {
+		if err := exec("PRAGMA key = " + quoteKey(encryptionKey) + ";"); err != nil {
+			C.sqlite3_close_v2(db)
+			return nil, err
+		}
+		// Cipher-tuning pragmas, in sqlcipherCipherParams order, after the key
+		// and still before the first page read.
+		for _, pragma := range cipherPragmas {
+			if err := exec(pragma); err != nil {
+				C.sqlite3_close_v2(db)
+				return nil, err
+			}
+		}
+	}
+
 	// Busy timeout
 	if err := exec(fmt.Sprintf("PRAGMA busy_timeout = %d;", busyTimeout)); err != nil {
 		C.sqlite3_close_v2(db)
@@ -1633,6 +1824,18 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 		conn.stmtCache = make([]*SQLiteStmt, 0, stmtCacheSize)
 		conn.stmtCacheEnabled = true
 	}
+
+	// From here on the conn owns the C handle. Close it on any error return
+	// below — conn.Close() is idempotent and, unlike a bare C.sqlite3_close_v2,
+	// also runs deleteHandles to release the callback handles registered for the
+	// auth/crypt functions. opened is set true once ownership transfers to the
+	// caller at the successful return.
+	opened := false
+	defer func() {
+		if !opened {
+			conn.Close()
+		}
+	}()
 
 	// Password Cipher has to be registered before authentication
 	if len(authCrypt) > 0 {
@@ -1696,7 +1899,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	// If a database contains the SQLITE_USER table, then the
 	// call to Authenticate must be invoked with an
 	// appropriate username and password prior to enable read and write
-	//access to the database.
+	// access to the database.
 	//
 	// Return SQLITE_OK on success or SQLITE_ERROR if the username/password
 	// combination is incorrect or unknown.
@@ -1754,7 +1957,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	// and activating user authentication creates the internal table `sqlite_user`.
 	if autoVacuum > -1 {
 		if err := exec(fmt.Sprintf("PRAGMA auto_vacuum = %d;", autoVacuum)); err != nil {
-			C.sqlite3_close_v2(db)
+			conn.Close()
 			return nil, err
 		}
 	}
@@ -1765,10 +1968,10 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 		// has provided an username and password within the DSN.
 		// We are not allowed to continue.
 		if len(authUser) == 0 {
-			return nil, fmt.Errorf("Missing '_auth_user' while user authentication was requested with '_auth'")
+			return nil, fmt.Errorf("missing '_auth_user' while user authentication was requested with '_auth'")
 		}
 		if len(authPass) == 0 {
-			return nil, fmt.Errorf("Missing '_auth_pass' while user authentication was requested with '_auth'")
+			return nil, fmt.Errorf("missing '_auth_pass' while user authentication was requested with '_auth'")
 		}
 
 		// Check if User Authentication is Enabled
@@ -1783,7 +1986,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	// Case Sensitive LIKE
 	if caseSensitiveLike > -1 {
 		if err := exec(fmt.Sprintf("PRAGMA case_sensitive_like = %d;", caseSensitiveLike)); err != nil {
-			C.sqlite3_close_v2(db)
+			conn.Close()
 			return nil, err
 		}
 	}
@@ -1791,7 +1994,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	// Defer Foreign Keys
 	if deferForeignKeys > -1 {
 		if err := exec(fmt.Sprintf("PRAGMA defer_foreign_keys = %d;", deferForeignKeys)); err != nil {
-			C.sqlite3_close_v2(db)
+			conn.Close()
 			return nil, err
 		}
 	}
@@ -1799,7 +2002,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	// Foreign Keys
 	if foreignKeys > -1 {
 		if err := exec(fmt.Sprintf("PRAGMA foreign_keys = %d;", foreignKeys)); err != nil {
-			C.sqlite3_close_v2(db)
+			conn.Close()
 			return nil, err
 		}
 	}
@@ -1807,7 +2010,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	// Ignore CHECK Constraints
 	if ignoreCheckConstraints > -1 {
 		if err := exec(fmt.Sprintf("PRAGMA ignore_check_constraints = %d;", ignoreCheckConstraints)); err != nil {
-			C.sqlite3_close_v2(db)
+			conn.Close()
 			return nil, err
 		}
 	}
@@ -1815,7 +2018,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	// Journal Mode
 	if journalMode != "" {
 		if err := exec(fmt.Sprintf("PRAGMA journal_mode = %s;", journalMode)); err != nil {
-			C.sqlite3_close_v2(db)
+			conn.Close()
 			return nil, err
 		}
 	}
@@ -1824,14 +2027,14 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	// Because the default is NORMAL and this is not changed in this package
 	// by using the compile time SQLITE_DEFAULT_LOCKING_MODE this PRAGMA can always be executed
 	if err := exec(fmt.Sprintf("PRAGMA locking_mode = %s;", lockingMode)); err != nil {
-		C.sqlite3_close_v2(db)
+		conn.Close()
 		return nil, err
 	}
 
 	// Query Only
 	if queryOnly > -1 {
 		if err := exec(fmt.Sprintf("PRAGMA query_only = %d;", queryOnly)); err != nil {
-			C.sqlite3_close_v2(db)
+			conn.Close()
 			return nil, err
 		}
 	}
@@ -1839,7 +2042,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	// Recursive Triggers
 	if recursiveTriggers > -1 {
 		if err := exec(fmt.Sprintf("PRAGMA recursive_triggers = %d;", recursiveTriggers)); err != nil {
-			C.sqlite3_close_v2(db)
+			conn.Close()
 			return nil, err
 		}
 	}
@@ -1851,7 +2054,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	// you can compile with secure_delete 'ON' and disable it for a specific database connection.
 	if secureDelete != "DEFAULT" {
 		if err := exec(fmt.Sprintf("PRAGMA secure_delete = %s;", secureDelete)); err != nil {
-			C.sqlite3_close_v2(db)
+			conn.Close()
 			return nil, err
 		}
 	}
@@ -1867,7 +2070,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	// Writable Schema
 	if writableSchema > -1 {
 		if err := exec(fmt.Sprintf("PRAGMA writable_schema = %d;", writableSchema)); err != nil {
-			C.sqlite3_close_v2(db)
+			conn.Close()
 			return nil, err
 		}
 	}
@@ -1875,7 +2078,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 	// Cache Size
 	if cacheSize != nil {
 		if err := exec(fmt.Sprintf("PRAGMA cache_size = %d;", *cacheSize)); err != nil {
-			C.sqlite3_close_v2(db)
+			conn.Close()
 			return nil, err
 		}
 	}
@@ -1893,6 +2096,7 @@ func (d *SQLiteDriver) Open(dsn string) (driver.Conn, error) {
 			return nil, err
 		}
 	}
+	opened = true
 	runtime.SetFinalizer(conn, (*SQLiteConn).Close)
 	return conn, nil
 }
@@ -2011,7 +2215,7 @@ func (c *SQLiteConn) Prepare(query string) (driver.Stmt, error) {
 	return c.prepare(context.Background(), query)
 }
 
-func (c *SQLiteConn) prepare(ctx context.Context, query string) (driver.Stmt, error) {
+func (c *SQLiteConn) prepare(_ context.Context, query string) (driver.Stmt, error) {
 	pquery := C.CString(query)
 	defer C.free(unsafe.Pointer(pquery))
 	var s *C.sqlite3_stmt
@@ -2069,7 +2273,9 @@ func (c *SQLiteConn) GetFilename(schemaName string) string {
 	if schemaName == "" {
 		schemaName = "main"
 	}
-	return C.GoString(C.sqlite3_db_filename(c.db, C.CString(schemaName)))
+	cSchema := C.CString(schemaName)
+	defer C.free(unsafe.Pointer(cSchema))
+	return C.GoString(C.sqlite3_db_filename(c.db, cSchema))
 }
 
 // GetLimit returns the current value of a run-time limit.
@@ -2613,7 +2819,7 @@ func (rc *SQLiteRows) nextSyncLocked(dest []driver.Value) error {
 			var timeVal time.Time
 
 			n := int(col.n)
-			s := C.GoStringN((*C.char)(unsafe.Pointer(col.ptr)), C.int(n))
+			s := C.GoStringN((*C.char)(col.ptr), C.int(n))
 
 			switch decltype[i] {
 			case columnTimestamp, columnDatetime, columnDate:
