@@ -1,0 +1,142 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CGO_ENABLED: "1"
+  GOFLAGS: "-trimpath"
+
+jobs:
+  # Build and Test run across every supported OS/arch target: the SQLCipher cgo
+  # build and its OpenSSL linkage are platform-specific, so a green Linux x64
+  # run says nothing about ARM64 or Apple Silicon. Lint and Vuln are static,
+  # platform-agnostic analyses and run once on Linux x64.
+  #
+  # House rule (writing-workflows): every job/leg runs on Blacksmith, never a
+  # GitHub-hosted runner. 2 vCPU is the like-for-like Linux default (compiling
+  # the single-file amalgamation doesn't parallelize across cores); macOS starts
+  # at Blacksmith's smallest size, 6 vCPU.
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: blacksmith-2vcpu-ubuntu-2404
+          - target: linux-arm64
+            runner: blacksmith-2vcpu-ubuntu-2404-arm
+          - target: macos-arm64
+            runner: blacksmith-6vcpu-macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: Build
+        run: go build ./...
+
+  race:
+    name: Test (race, ${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: blacksmith-2vcpu-ubuntu-2404
+          - target: linux-arm64
+            runner: blacksmith-2vcpu-ubuntu-2404-arm
+          - target: macos-arm64
+            runner: blacksmith-6vcpu-macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: go test -race
+        run: go test -race ./...
+
+  # The default build leaves most optional feature tags off, so the test files
+  # gated behind them (sqlite3_opt_*_test.go) never compile in the matrix above.
+  # This job turns each one on in its own leg so those tests actually run. Tags
+  # are platform-agnostic compile concerns, so one Linux x64 runner is enough —
+  # crossing them with the OS/arch matrix would multiply legs for no new signal.
+  # Plain `go test` (not -race): the race detector already runs on the default
+  # build across all three platforms; these legs exist to exercise tag-gated
+  # code paths, not to re-check concurrency. sqlite_userauth is intentionally
+  # absent — upstream neutered the tag (every connection errors out), so its
+  # test file can no longer pass; see sqlite3_opt_userauth.go.
+  features:
+    name: Feature tag (${{ matrix.tag }})
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        tag:
+          - sqlite_column_metadata
+          - sqlite_math_functions
+          - sqlite_preupdate_hook
+          - sqlite_unlock_notify
+          - sqlite_vtable
+          - sqlite_fts5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: go test -tags ${{ matrix.tag }}
+        run: go test -tags ${{ matrix.tag }} ./...
+
+  # Native Go fuzz targets (fuzz_test.go) run a short mutation smoke per target.
+  # Their seed corpora already run as ordinary subtests in the jobs above; this
+  # job adds coverage-guided mutation for a bounded time to surface crashes the
+  # seeds don't. One target per leg because `go test -fuzz` fuzzes a single
+  # target at a time. Like lint/vuln these are platform-agnostic parser/decoder
+  # checks, so one Linux x64 runner is enough; plain `go test` (the default build
+  # already carries race coverage across all three platforms). `-run '^$'` skips
+  # the unit suite so each leg only fuzzes.
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - FuzzExecSQL
+          - FuzzDSN
+          - FuzzDatabaseFile
+          - FuzzTimestampDecode
+          - FuzzQuoteKey
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: go test -fuzz ${{ matrix.target }}
+        run: go test -run '^$' -fuzz '^${{ matrix.target }}$' -fuzztime=30s .
+
+  lint:
+    name: Lint
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
+
+  vuln:
+    name: Vulnerability scan
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: govulncheck
+        run: govulncheck ./...

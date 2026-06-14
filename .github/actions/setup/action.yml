@@ -1,0 +1,33 @@
+name: Set up toolchain
+description: >-
+  Installs the OpenSSL development libraries the SQLCipher cgo build links
+  against (libcrypto), then sets up Go from go.mod with module/build caching.
+  Used by every CI job so the OpenSSL setup stays in one place across the
+  OS/arch matrix.
+
+runs:
+  using: composite
+  steps:
+    # The SQLCipher codec is compiled with -DSQLCIPHER_CRYPTO_OPENSSL and links
+    # -lcrypto, and the amalgamation #includes OpenSSL headers — so libcrypto's
+    # dev headers + library must be present on every runner, Linux and macOS
+    # alike. See sqlite3_crypto_openssl.go.
+    - name: Install OpenSSL (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libssl-dev
+
+    # macOS: install via Homebrew. The driver hard-codes the Homebrew keg paths
+    # (/opt/homebrew/opt/openssl), so this also validates that exact wiring on
+    # Apple Silicon. Idempotent — a no-op when already present in the image.
+    - name: Install OpenSSL (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: brew install openssl
+
+    - uses: actions/setup-go@v6
+      with:
+        go-version-file: go.mod
+        cache: true
