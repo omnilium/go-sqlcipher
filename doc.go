@@ -1,15 +1,43 @@
 /*
-Package sqlite3 provides interface to SQLite3 databases.
+Package sqlite3 provides an SQLCipher at-rest-encrypted SQLite3 driver for
+database/sql.
 
-This works as a driver for database/sql.
+It is Omnilium's fork of mattn/go-sqlite3: the bundled C amalgamation is
+SQLCipher (Zetetic) with the encryption codec compiled in, backed by OpenSSL
+(libcrypto) — a hard build- and run-time dependency. The public API and the
+"sqlite3" driver name are unchanged from upstream; without an encryption key a
+connection behaves as an ordinary, unencrypted SQLite database.
 
-Installation
+# Installation
 
-	go get github.com/mattn/go-sqlite3
+	go get github.com/omnilium/go-sqlcipher
+
+# Encryption
+
+Supply a key in the DSN to open or create an encrypted database. The key is
+applied (via PRAGMA key) before the connection's first page read, which is what
+makes write → close → reopen round-trips work.
+
+	import (
+		"database/sql"
+
+		_ "github.com/omnilium/go-sqlcipher"
+	)
+
+	// Passphrase key (run through SQLCipher's KDF):
+	db, err := sql.Open("sqlite3", "file:app.db?_key=correct-horse-battery-staple")
+
+	// Raw 256-bit key as an x'<hex>' blob literal (bypasses the KDF):
+	db, err = sql.Open("sqlite3", "file:app.db?_key=x'2DD29CA851E7B56E4697B0E1F08507293D761A05CE4D1B628663F411A8086D99'")
+
+For databases written with non-default cipher settings, the DSN parameters
+_cipher_compatibility, _cipher_page_size, _kdf_iter, _cipher_hmac_algorithm,
+_cipher_kdf_algorithm, and _cipher_plaintext_header_size are applied right after
+the key. See the Open doc comment for details.
 
 # Supported Types
 
-Currently, go-sqlite3 supports the following data types.
+This driver supports the following data types.
 
 	+------------------------------+
 	|go        | sqlite3           |
